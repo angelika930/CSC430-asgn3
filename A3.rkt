@@ -10,6 +10,7 @@
 
 (define (parse [s : Sexp]) : ExprC
   (match s
+    [(? real? r) r]
     [(list (? symbol? s) l r) (binop s (parse l) (parse r))]
     [(list (? symbol? id) exp) (IdC id (parse exp))]
     [(list 'ifleq0? test then rest) (LeqC (parse test) (parse then) (parse rest))]
