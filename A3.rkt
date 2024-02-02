@@ -4,10 +4,13 @@
 
 (define-type ExprC (U Real binop IdC LeqC Symbol))
 
+;--------------------------------------------------------------------------
+(struct FunDefC ([name : Symbol] [arg : Symbol] [body : ExprC]) #:transparent)
 (struct binop ([op : Symbol] [l : ExprC] [r : ExprC]) #:transparent)
 (struct IdC ([id : Symbol] [exp : ExprC]) #:transparent)
 (struct LeqC ([test : ExprC] [then : ExprC] [rest : ExprC]) #:transparent)
 
+;---------------------------------------------------------------------------
 (define (parse [s : Sexp]) : ExprC
   (match s
     [(? real? r) r]
@@ -35,6 +38,32 @@
                              [(<= (interp test) 0) (interp then)]
                              [else (interp rest)])]
     [(? symbol? s) 0]))
+
+;-------------------------------------------------------------------------
+(define (parse-fundef [s : Sexp]) : FunDefC
+  (match s
+    [(list 'fun (list (? symbol? id1) (? symbol? id2)) ': expr)
+          (FunDefC id1 id2 (parse expr))]
+    [other (error "Malformed function structure")]))
+
+(check-equal? (parse-fundef '(fun '(abc bnm) : 1)) (FunDefC 'abc 'bnm 1))
+
+
+
+
+(define (get-fundef [n : Symbol] [fds : (Listof FunDefC)]) : FunDefC
+  (cond
+    [(empty? fds)
+     (error 'get-fundef "reference to undefined function")]
+    [(cons? fds)
+     (cond
+       [(equal? n (FunDefC-name (first fds))) (first fds)]
+       [else (get-fundef n (rest fds))])]))
+
+
+
+
+
 
 (check-equal? (interp (binop '+ (binop '* 2 3) 2)) 8)
 (check-equal? (interp (binop '- (binop '/ 4 2) 1)) 1)
