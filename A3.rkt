@@ -35,13 +35,15 @@
 
 
 ;Parses a Sexp into a FunDefC
-;(define (parse-fundef [s : Sexp]) : FunDefC
-;  (match s
-;    [(list 'fun (list (? symbol? id1) (? symbol? id2)) ': expr)
-;          (FunDefC id1 id2 (parse expr))]
- ;   [other (error "Malformed function structure")]))
+(define (parse-fundef [s : Sexp]) : FunDefC
+  (match s
+    [(list 'fun (list (? symbol? id1) (? symbol? id2)) ': expr)
+          (FunDefC id1 id2 (parse expr))]
+    [other (error "Malformed function structure")])) 
 
-;(check-equal? (parse-fundef '(fun '(abc bnm) : 1)) (FunDefC 'abc 'bnm 1))
+(check-equal? (parse-fundef '(fun (abc bnm) : 1)) (FunDefC 'abc 'bnm 1))
+(check-exn (regexp (regexp-quote "Malformed function structure"))
+           (lambda () (parse-fundef '{4})))
 
 
 ;Replaces all occurences of 'what' with 'for' from 'in'
@@ -58,12 +60,14 @@
                                  (subst what for then)
                                  (subst what for rest))]))
 
+(check-equal? (subst 3 'x (LeqC 1 'x (binop '+ 'x 'y))) (LeqC 1 3 (binop '+ 3 'y))) 
+(check-equal? (subst 4 'y (AppC 'fun 'y)) (AppC 'fun 4))
 
 ;Gets a FunDefC from a list with name n 
 (define (get-fundef [n : Symbol] [fds : (Listof FunDefC)]) : FunDefC
   (cond
     [(empty? fds)
-     (error 'get-fundef "reference to undefined function")]
+     (error 'get-fundef "reference to undefined function")] 
     [(cons? fds)
      (cond
        [(equal? n (FunDefC-name (first fds))) (first fds)]
