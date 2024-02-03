@@ -2,11 +2,10 @@
 
 (require typed/rackunit)
 
-(define-type ExprC (U Real binop AppC LeqC Symbol))
-
 ;--------------------------------------------------------------------------
-
 (struct FunDefC ([name : Symbol] [arg : Symbol] [body : ExprC]) #:transparent)
+
+(define-type ExprC (U Real binop AppC LeqC Symbol))
 (struct binop ([op : Symbol] [l : ExprC] [r : ExprC]) #:transparent)
 (struct AppC ([id : Symbol] [exp : ExprC]) #:transparent)
 (struct LeqC ([test : ExprC] [then : ExprC] [rest : ExprC]) #:transparent)
@@ -37,11 +36,11 @@
 ;Parses a Sexp into a FunDefC
 (define (parse-fundef [s : Sexp]) : FunDefC
   (match s
-    [(list 'fun (list (? symbol? id1) (? symbol? id2)) ': expr)
+    [(list 'func (list (? symbol? id1) (? symbol? id2)) ': expr)
           (FunDefC id1 id2 (parse expr))]
     [other (error "Malformed function structure")])) 
 
-(check-equal? (parse-fundef '(fun (abc bnm) : 1)) (FunDefC 'abc 'bnm 1))
+(check-equal? (parse-fundef '(func (abc bnm) : 1)) (FunDefC 'abc 'bnm 1))
 (check-exn (regexp (regexp-quote "Malformed function structure"))
            (lambda () (parse-fundef '{4})))
 
@@ -73,6 +72,9 @@
        [(equal? n (FunDefC-name (first fds))) (first fds)]
        [else (get-fundef n (rest fds))])]))
 
+(check-exn (regexp (regexp-quote "reference to undefined function"))
+           (lambda () (get-fundef 'x '())))
+
 ;Interprets an AST (as an ExprC) into a real number 
 (define (interp [a : ExprC] [fds : (Listof FunDefC)]) : Real
   (match a
@@ -97,6 +99,41 @@
            (lambda () (interp 'x '())))
 
 ;-------------------------------------------------------------------------
+(define (parse-prog [s : Sexp]) : (Listof FunDefC)
+  (match s
+    ['() '()]
+    [(cons f r) (cons (parse-fundef f) (parse-prog r))]
+    [other (error "Malformed Program:" s)]))
 
+(check-equal? (parse-prog '{{func {fun y} : {+ 1 2}} {func {fun2 x} : 1}}) (list (FunDefC 'fun 'y (binop '+ 1 2)) (FunDefC 'fun2 'x 1)))
+(check-exn (regexp (regexp-quote "Malformed Program: 'x"))
+           (lambda () (parse-prog 'x)))
+
+(define (interp-fns [l : (Listof FunDefC)]) : Real
+  (match (get-fundef 'main l)
+    [(FunDefC 'main arg body) (interp body l)]))
+
+(check-equal? (interp-fns (list (FunDefC 'fun2 'x 1) (FunDefC 'main 'init (binop '+ 1 2)))) 3)
+
+(: top-interp (Sexp -> Real))
+(define (top-interp fun-sexps)
+  (interp-fns (parse-prog fun-sexps)))
+
+(define prog '{
+               {func {fib x} : {ifleq0? {- x 1} 1 {+ {fib {- x 1}} {fib {- x 2}}}}}
+               {func {main init} : {fib 4}}
+               })
+
+(define prog2 ' {
+                 {func {sqr x} : {* x x}}
+                 {func {main init} : {sqr 7}}
+                 }) 
+
+(check-equal? (top-interp prog) 5)
+(check-equal? (top-interp prog2) 49)
+(check-equal? (interp-fns
+               (parse-prog '{{func {f x} : {+ x 14}}
+                             {func {main init} : {f 2}}}))
+              16)
 
 
