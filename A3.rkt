@@ -74,6 +74,10 @@
 
 (check-exn (regexp (regexp-quote "reference to undefined function"))
            (lambda () (get-fundef 'x '())))
+(check-equal? (get-fundef 'subtract (list (FunDefC 'add '+ 4) (FunDefC 'mult '* 2) (FunDefC 'subtract '- 4))) (FunDefC 'subtract '- 4))
+(check-exn (regexp (regexp-quote "reference to undefined function" ))
+           (lambda () (get-fundef 'x (list (FunDefC 'add '+ 4)))))
+
 
 ;Interprets an AST (as an ExprC) into a real number 
 (define (interp [a : ExprC] [fds : (Listof FunDefC)]) : Real
