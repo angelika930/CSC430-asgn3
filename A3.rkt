@@ -14,10 +14,12 @@
 
 ;---------------------------------------------------------------------------
 
+;Checks if a given argument is a binop
 (: is-binop? (Any -> Boolean : #:+ Symbol))
 (define (is-binop? sym)
   (and (symbol? sym) (hash-has-key? ht sym)))
 
+;Checks if a given argument is a keyword
 (: not-keyword? (Any -> Boolean : #:+ Symbol))
 (define (not-keyword? sym)
   (and (symbol? sym) (not (hash-has-key? ht sym)) (not (or (eq? 'ifleq0? sym) (eq? 'func sym) (eq? ': sym)))))
@@ -127,6 +129,8 @@
            (lambda () (interp (binop '/ 5 0) '())))
 
 ;-------------------------------------------------------------------------
+
+;Parse the entire program
 (define (parse-prog [s : Sexp]) : (Listof FunDefC)
   (match s
     ['() '()]
@@ -138,13 +142,13 @@
 (check-exn (regexp (regexp-quote "OAZO Malformed Program: 'x"))
            (lambda () (parse-prog 'x)))
 
+;Find the main function and interp it
 (define (interp-fns [l : (Listof FunDefC)]) : Real
-  ;(match (get-fundef 'main l)
-   ; [(FunDefC 'main arg body) (interp body l)]))
   (interp (AppC 'main 0) l))
 
 (check-equal? (interp-fns (list (FunDefC 'fun2 'x 1) (FunDefC 'main 'init (binop '+ 1 2)))) 3)
 
+;Wrapper for our praser and interpretor 
 (: top-interp (Sexp -> Real))
 (define (top-interp fun-sexps)
   (interp-fns (parse-prog fun-sexps)))
