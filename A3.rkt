@@ -20,9 +20,10 @@
 
 (: not-keyword? (Any -> Boolean : #:+ Symbol))
 (define (not-keyword? sym)
-  (and (symbol? sym) (not (hash-has-key? ht sym)) (not (eq? 'ifleq0? sym))))
+  (and (symbol? sym) (not (hash-has-key? ht sym)) (not (or (eq? 'ifleq0? sym) (eq? 'func sym) (eq? ': sym)))))
 
 (check-equal? (not-keyword? '*) #f)
+(check-equal? (not-keyword? '+) #f)
 (check-equal? (not-keyword? 'abc) #t)
 
 
@@ -31,14 +32,14 @@
   (match s
     [(? real? r) r]
     [(list (? is-binop? op) l r) (binop op (parse l) (parse r))]
-    [(list (? symbol? id) exp) (AppC id (parse exp))]
+    [(list (? not-keyword? id) exp) (AppC id (parse exp))]
     [(list 'ifleq0? test then rest) (LeqC (parse test) (parse then) (parse rest))]
     [(? not-keyword? s) s]
     [other (error "OAZO Malformed ExprC:" s)]))
 
 (check-equal? (parse '{+ 1 2}) (binop '+ 1 2))
 (check-equal? (parse '{+ {* 2 3} 2}) (binop '+ (binop '* 2 3) 2))
-(check-equal? (parse '{ifleq0? x {func 7} 8}) (LeqC 'x (AppC 'func 7) 8))
+(check-equal? (parse '{ifleq0? x {fun 7} 8}) (LeqC 'x (AppC 'fun 7) 8))
 (check-exn (regexp (regexp-quote "OAZO Malformed ExprC: '(4 4)"))
            (lambda () (parse '{4 4})))
 (check-exn (regexp (regexp-quote "OAZO Malformed ExprC: '/"))
@@ -102,7 +103,9 @@
 (define (interp [a : ExprC] [fds : (Listof FunDefC)]) : Real
   (match a
     [(? real? r) r]
-    [(binop op l r) ((hash-ref ht op) (interp l fds) (interp r fds))]
+    [(binop op l r) (cond
+                       [(and (eq? op '/) (eq? (interp r fds) 0)) (error "OAZO Divide by 0 error")]
+                       [else ((hash-ref ht op) (interp l fds) (interp r fds))])]
     [(AppC id exp)
      (match (get-fundef id fds)
        [(FunDefC name param body) (interp (subst (interp exp fds) param body) fds)])]
@@ -120,6 +123,8 @@
 (check-equal? (interp (AppC 'x 1) (list (FunDefC 'x 'y (binop '+ 'y 1)))) 2)
 (check-exn (regexp (regexp-quote "OAZO Malformed ExprC: 'x"))
            (lambda () (interp 'x '())))
+(check-exn (regexp (regexp-quote "OAZO Divide by 0 error"))
+           (lambda () (interp (binop '/ 5 0) '())))
 
 ;-------------------------------------------------------------------------
 (define (parse-prog [s : Sexp]) : (Listof FunDefC)
@@ -161,4 +166,4 @@
                              {func {main init} : {f 2}}}))
               16)
 
-;expected exception with message containing OAZO on test expression: '(top-interp '((func (ignoreit x) : (+ 3 4)) (func (main init) : (ignoreit (/ 1 (+ 0 0))))))
+
