@@ -38,7 +38,7 @@
   (match s
     [(list 'func (list (? symbol? id1) (? symbol? id2)) ': expr)
           (FunDefC id1 id2 (parse expr))]
-    [other (error "OAZO Malformed function structure")])) 
+    [other (error "OAZO Malformed function structure")]))
 
 (check-equal? (parse-fundef '(func (abc bnm) : 1)) (FunDefC 'abc 'bnm 1))
 (check-exn (regexp (regexp-quote "OAZO Malformed function structure"))
@@ -59,14 +59,14 @@
                                  (subst what for then)
                                  (subst what for rest))]))
 
-(check-equal? (subst 3 'x (LeqC 1 'x (binop '+ 'x 'y))) (LeqC 1 3 (binop '+ 3 'y))) 
+(check-equal? (subst 3 'x (LeqC 1 'x (binop '+ 'x 'y))) (LeqC 1 3 (binop '+ 3 'y)))
 (check-equal? (subst 4 'y (AppC 'fun 'y)) (AppC 'fun 4))
 
-;Gets a FunDefC from a list with name n 
+;Gets a FunDefC from a list with name n
 (define (get-fundef [n : Symbol] [fds : (Listof FunDefC)]) : FunDefC
   (cond
     [(empty? fds)
-     (error 'get-fundef "OAZO reference to undefined function")] 
+     (error 'get-fundef "OAZO reference to undefined function")]
     [(cons? fds)
      (cond
        [(equal? n (FunDefC-name (first fds))) (first fds)]
@@ -78,7 +78,7 @@
 (check-exn (regexp (regexp-quote "OAZO reference to undefined function" ))
            (lambda () (get-fundef 'x (list (FunDefC 'add '+ 4)))))
 
-;Interprets an AST (as an ExprC) into a real number 
+;Interprets an AST (as an ExprC) into a real number
 (define (interp [a : ExprC] [fds : (Listof FunDefC)]) : Real
   (match a
     [(? real? r) r]
@@ -132,7 +132,7 @@
 (define prog2 ' {
                  {func {sqr x} : {* x x}}
                  {func {main init} : {sqr 7}}
-                 }) 
+                 })
 
 (check-equal? (top-interp prog) 5)
 (check-equal? (top-interp prog2) 49)
@@ -140,5 +140,3 @@
                (parse-prog '{{func {f x} : {+ x 14}}
                              {func {main init} : {f 2}}}))
               16)
-
-
