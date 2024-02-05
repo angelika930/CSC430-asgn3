@@ -14,14 +14,26 @@
 
 ;---------------------------------------------------------------------------
 
+(: is-binop? (Any -> Boolean : #:+ Symbol))
+(define (is-binop? sym)
+  (and (symbol? sym) (hash-has-key? ht sym)))
+
+(: not-keyword? (Any -> Boolean : #:+ Symbol))
+(define (not-keyword? sym)
+  (and (symbol? sym) (not (hash-has-key? ht sym)) (not (eq? 'ifleq0? sym))))
+
+(check-equal? (not-keyword? '*) #f)
+(check-equal? (not-keyword? 'abc) #t)
+
+
 ;Parses an Sexpression into an ExprC
 (define (parse [s : Sexp]) : ExprC
   (match s
     [(? real? r) r]
-    [(list (? symbol? s) l r) (binop s (parse l) (parse r))]
+    [(list (? is-binop? op) l r) (binop op (parse l) (parse r))]
     [(list (? symbol? id) exp) (AppC id (parse exp))]
     [(list 'ifleq0? test then rest) (LeqC (parse test) (parse then) (parse rest))]
-    [(? symbol? s) s]
+    [(? not-keyword? s) s]
     [other (error "OAZO Malformed ExprC:" s)]))
 
 (check-equal? (parse '{+ 1 2}) (binop '+ 1 2))
@@ -29,20 +41,27 @@
 (check-equal? (parse '{ifleq0? x {func 7} 8}) (LeqC 'x (AppC 'func 7) 8))
 (check-exn (regexp (regexp-quote "OAZO Malformed ExprC: '(4 4)"))
            (lambda () (parse '{4 4})))
+(check-exn (regexp (regexp-quote "OAZO Malformed ExprC: '/"))
+           (lambda () (parse '{+ / 3})))
 
+;(check-exn (regexp (regexp-quote "OAZO Malformed ExprC: 'ifleq0? ")
+ ;          (lambda () (parse 'ifleq0?))))
 ;---------------------------------------------------------------------------
 
 
 ;Parses a Sexp into a FunDefC
 (define (parse-fundef [s : Sexp]) : FunDefC
   (match s
-    [(list 'func (list (? symbol? id1) (? symbol? id2)) ': expr)
-          (FunDefC id1 id2 (parse expr))]
+    [(list 'func (list (? not-keyword? id1) (? not-keyword? id2)) ': expr)
+     (FunDefC id1 id2 (parse expr))]
     [other (error "OAZO Malformed function structure")]))
 
-(check-equal? (parse-fundef '(func (abc bnm) : 1)) (FunDefC 'abc 'bnm 1))
+(check-equal? (parse-fundef '(func (abc bnm) : 1)) (FunDefC 'abc 'bnm 1)) 
 (check-exn (regexp (regexp-quote "OAZO Malformed function structure"))
            (lambda () (parse-fundef '{4})))
+(check-exn (regexp (regexp-quote "OAZO Malformed function structure"))
+           (lambda () (parse-fundef '{func {+ 4} : 13})))
+
 
 
 ;Replaces all occurences of 'what' with 'for' from 'in'
@@ -74,7 +93,8 @@
 
 (check-exn (regexp (regexp-quote "OAZO reference to undefined function"))
            (lambda () (get-fundef 'x '())))
-(check-equal? (get-fundef 'subtract (list (FunDefC 'add '+ 4) (FunDefC 'mult '* 2) (FunDefC 'subtract '- 4))) (FunDefC 'subtract '- 4))
+(check-equal? (get-fundef 'subtract (list (FunDefC 'add '+ 4) (FunDefC 'mult '* 2)
+                                          (FunDefC 'subtract '- 4))) (FunDefC 'subtract '- 4))
 (check-exn (regexp (regexp-quote "OAZO reference to undefined function" ))
            (lambda () (get-fundef 'x (list (FunDefC 'add '+ 4)))))
 
@@ -140,3 +160,5 @@
                (parse-prog '{{func {f x} : {+ x 14}}
                              {func {main init} : {f 2}}}))
               16)
+
+;expected exception with message containing OAZO on test expression: '(top-interp '((func (ignoreit x) : (+ 3 4)) (func (main init) : (ignoreit (/ 1 (+ 0 0))))))
