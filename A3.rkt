@@ -22,12 +22,12 @@
     [(list (? symbol? id) exp) (AppC id (parse exp))]
     [(list 'ifleq0? test then rest) (LeqC (parse test) (parse then) (parse rest))]
     [(? symbol? s) s]
-    [other (error "Malformed ExprC:" s)]))
+    [other (error "OAZO Malformed ExprC:" s)]))
 
 (check-equal? (parse '{+ 1 2}) (binop '+ 1 2))
 (check-equal? (parse '{+ {* 2 3} 2}) (binop '+ (binop '* 2 3) 2))
 (check-equal? (parse '{ifleq0? x {func 7} 8}) (LeqC 'x (AppC 'func 7) 8))
-(check-exn (regexp (regexp-quote "Malformed ExprC: '(4 4)"))
+(check-exn (regexp (regexp-quote "OAZO Malformed ExprC: '(4 4)"))
            (lambda () (parse '{4 4})))
 
 ;---------------------------------------------------------------------------
@@ -38,10 +38,10 @@
   (match s
     [(list 'func (list (? symbol? id1) (? symbol? id2)) ': expr)
           (FunDefC id1 id2 (parse expr))]
-    [other (error "Malformed function structure")])) 
+    [other (error "OAZO Malformed function structure")])) 
 
 (check-equal? (parse-fundef '(func (abc bnm) : 1)) (FunDefC 'abc 'bnm 1))
-(check-exn (regexp (regexp-quote "Malformed function structure"))
+(check-exn (regexp (regexp-quote "OAZO Malformed function structure"))
            (lambda () (parse-fundef '{4})))
 
 
@@ -66,14 +66,17 @@
 (define (get-fundef [n : Symbol] [fds : (Listof FunDefC)]) : FunDefC
   (cond
     [(empty? fds)
-     (error 'get-fundef "reference to undefined function")] 
+     (error 'get-fundef "OAZO reference to undefined function")] 
     [(cons? fds)
      (cond
        [(equal? n (FunDefC-name (first fds))) (first fds)]
        [else (get-fundef n (rest fds))])]))
 
-(check-exn (regexp (regexp-quote "reference to undefined function"))
+(check-exn (regexp (regexp-quote "OAZO reference to undefined function"))
            (lambda () (get-fundef 'x '())))
+(check-equal? (get-fundef 'subtract (list (FunDefC 'add '+ 4) (FunDefC 'mult '* 2) (FunDefC 'subtract '- 4))) (FunDefC 'subtract '- 4))
+(check-exn (regexp (regexp-quote "OAZO reference to undefined function" ))
+           (lambda () (get-fundef 'x (list (FunDefC 'add '+ 4)))))
 
 ;Interprets an AST (as an ExprC) into a real number 
 (define (interp [a : ExprC] [fds : (Listof FunDefC)]) : Real
@@ -86,7 +89,7 @@
     [(LeqC test then rest) (cond
                              [(<= (interp test fds) 0) (interp then fds)]
                              [else (interp rest fds)])]
-    [other (error "Malformed ExprC:" a)]))
+    [other (error "OAZO Malformed ExprC:" a)]))
 
 
 (check-equal? (interp (binop '+ (binop '* 2 3) 2) '()) 8)
@@ -95,7 +98,7 @@
 (check-equal? (interp (LeqC 3 7 8) '()) 8)
 
 (check-equal? (interp (AppC 'x 1) (list (FunDefC 'x 'y (binop '+ 'y 1)))) 2)
-(check-exn (regexp (regexp-quote "Malformed ExprC: 'x"))
+(check-exn (regexp (regexp-quote "OAZO Malformed ExprC: 'x"))
            (lambda () (interp 'x '())))
 
 ;-------------------------------------------------------------------------
@@ -103,15 +106,17 @@
   (match s
     ['() '()]
     [(cons f r) (cons (parse-fundef f) (parse-prog r))]
-    [other (error "Malformed Program:" s)]))
+    [other (error "OAZO Malformed Program:" s)]))
 
-(check-equal? (parse-prog '{{func {fun y} : {+ 1 2}} {func {fun2 x} : 1}}) (list (FunDefC 'fun 'y (binop '+ 1 2)) (FunDefC 'fun2 'x 1)))
-(check-exn (regexp (regexp-quote "Malformed Program: 'x"))
+(check-equal? (parse-prog '{{func {fun y} : {+ 1 2}} {func {fun2 x} : 1}})
+              (list (FunDefC 'fun 'y (binop '+ 1 2)) (FunDefC 'fun2 'x 1)))
+(check-exn (regexp (regexp-quote "OAZO Malformed Program: 'x"))
            (lambda () (parse-prog 'x)))
 
 (define (interp-fns [l : (Listof FunDefC)]) : Real
-  (match (get-fundef 'main l)
-    [(FunDefC 'main arg body) (interp body l)]))
+  ;(match (get-fundef 'main l)
+   ; [(FunDefC 'main arg body) (interp body l)]))
+  (interp (AppC 'main 0) l))
 
 (check-equal? (interp-fns (list (FunDefC 'fun2 'x 1) (FunDefC 'main 'init (binop '+ 1 2)))) 3)
 
