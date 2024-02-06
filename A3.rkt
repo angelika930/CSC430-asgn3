@@ -178,8 +178,9 @@
                  })
 ;round
 (define round '{func {round x} : {ifleq0? {- x 0.499999} 0 {+ 1 {round {- x 1}}}}})
-(check-equal? (top-interp (list round '{func {main init} : {round 7.5}})) 8)
-(check-equal? (top-interp (list round '{func {main init} : {round 7.4}})) 7)
+(define round-top '{func {round-top x} : {ifleq0? x {- 0 {round {- 0 x}}} {round x}}})
+(check-equal? (top-interp (list round round-top '{func {main init} : {round-top 7.5}})) 8)
+(check-equal? (top-interp (list round round-top '{func {main init} : {round-top -7.4}})) -7)
 
 (check-equal? (top-interp prog) 5)
 (check-equal? (top-interp prog2) 49)
