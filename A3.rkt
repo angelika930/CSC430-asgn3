@@ -198,4 +198,54 @@
                              {func {main init} : {f 2}}}))
               16)
 
+(define prog3 '{
+                {func {f x x} : x}
+                {func {main} : {f x}}
+                })
+
+(define prog4 '{
+                {func {five} : 5}
+                {func {main} : {five}}
+                })
+
+(define prog5 '{
+                {func {f x} : (+ x 2)}
+                {func {main} : {f 3 4 5}}
+                })
+;(check-equal? (top-interp prog5) '(5 6 7))
+;expected exception with message containing OAZO on test expression: '(top-interp '((func (f x) : (+ x 2)) (func (main) : (f 3 4 5))))
+
+;round
+(define round '{func {round x} : {ifleq0? {- x 0.499999} 0 {+ 1 {round {- x 1}}}}})
+(define round-top '{func {round-top x} : {ifleq0? x {- 0 {round {- 0 x}}} {round x}}})
+(check-equal? (top-interp (list round round-top '{func {main init} : {round-top 7.5}})) 8)
+(check-equal? (top-interp (list round round-top '{func {main init} : {round-top -7.4}})) -7)
+
+(check-equal? (top-interp prog) 5)
+(check-equal? (top-interp prog2) 49)
+(check-equal? (interp-fns
+               (parse-prog '{{func {f x} : {+ x 14}}
+                             {func {main init} : {f 2}}}))
+              16)
+
 ;testing for multiple parameters
+
+(check-exn (regexp (regexp-quote "OAZO Malformed ExprC: 'x"))
+           (lambda () (top-interp prog3)))
+
+(check-equal? (interp-fns
+       (parse-prog '{{func {f x y} : {+ x y}}
+                     {func {main} : {f 1 2}}}))
+      3)
+
+ (check-exn #px"OAZO Malformed ExprC: 'y"
+            (λ ()
+              (interp-fns
+               (parse-prog '{{func {f x y} : {+ x y}}
+                             {func {main} : {f 1}}}))))
+
+;Testing for zero parameters
+(check-equal? (top-interp prog4) 5)
+
+
+
