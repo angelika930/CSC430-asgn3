@@ -31,7 +31,7 @@
   (match s
     [(? real? r) r]
     [(list (? is-binop? op) l r) (binop op (parse l) (parse r))]
-    [(list (? not-keyword? id) (list exps ...)) (AppC id (map parse exps))]
+    [(list (? not-keyword? id) exps ...) (AppC id (map parse exps))]
     [(list 'ifleq0? test then rest) (LeqC (parse test) (parse then) (parse rest))]
     [(? not-keyword? s) s]
     [other (error "OAZO Malformed ExprC:" s)]))
@@ -40,11 +40,11 @@
 ;Parses a Sexp into a FunDefC
 (define (parse-fundef [s : Sexp]) : FunDefC
   (match s
-    [(list 'func (list (? not-keyword? id1) (list (? not-keyword? ids) ...)) ': expr)
+    [(list 'func (list (? not-keyword? id1) (? not-keyword? ids) ...) ': expr)
      (FunDefC id1 (cast ids (Listof Symbol)) (parse expr))]
-    [other (error "OAZO Malformed function structure")]))
+    [other (error "OAZO Malformed function structure")])) 
 
-;Parse the entire program
+;Parse the entire program 
 (define (parse-prog [s : Sexp]) : (Listof FunDefC)
   (match s
     ['() '()]
@@ -53,7 +53,14 @@
 
 ;---------------------------------------------------------------------------
 
-(define (subst-multiarg [what : (Listof ExprC)] [for : (Listof Symbol)] [in : ExprC]) : ExprC)
+;Takes in a list of ExprC and substitutes variables one at a time
+(define (subst-multiarg [what : (Listof ExprC)] [for : (Listof Symbol)] [in : ExprC]) : ExprC
+  (match what
+    ['() in]
+    [(cons f r) (subst f (first for) (subst-multiarg r (rest for) in))]))
+
+
+
 
 ;Replaces all occurences of 'what' with 'for' from 'in'
 (define (subst [what : ExprC] [for : Symbol] [in : ExprC]) : ExprC
@@ -62,7 +69,7 @@
     [(? symbol? s) (cond
                      [(symbol=? s for) what]
                      [else in])]
-    [(AppC f a) (AppC f (subst what for a))]
+    [(AppC f a) (AppC f (map (lambda ([expr : ExprC])(subst what for expr)) a))]
     [(binop op l r) (binop op (subst what for l)
                            (subst what for r))]
     [(LeqC test then rest) (LeqC (subst what for test)
@@ -89,9 +96,9 @@
     [(binop op l r) (cond
                        [(and (eq? op '/) (eq? (interp r fds) 0)) (error "OAZO Divide by 0 error")]
                        [else ((hash-ref ht op) (interp l fds) (interp r fds))])]
-    [(AppC id exp)
+    [(AppC id Listexp)
      (match (get-fundef id fds)
-       [(FunDefC name params body) (interp (subst (interp exp fds) params body) fds)])]
+       [(FunDefC name params body) (interp (subst-multiarg  (map (lambda ([expr : ExprC]) (interp expr fds)) Listexp) params body) fds)])]
     [(LeqC test then rest) (cond
                              [(<= (interp test fds) 0) (interp then fds)]
                              [else (interp rest fds)])]
@@ -100,7 +107,7 @@
 
 ;Find the main function and interp it
 (define (interp-fns [l : (Listof FunDefC)]) : Real
-  (interp (AppC 'main 0) l))
+  (interp (AppC 'main '()) l))
 
 
 ;Wrapper for our praser and interpretor 
@@ -122,14 +129,14 @@
 ;parse
 (check-equal? (parse '{+ 1 2}) (binop '+ 1 2))
 (check-equal? (parse '{+ {* 2 3} 2}) (binop '+ (binop '* 2 3) 2))
-(check-equal? (parse '{ifleq0? x {fun 7} 8}) (LeqC 'x (AppC 'fun 7) 8))
+(check-equal? (parse '{ifleq0? x {fun 7} 8}) (LeqC 'x (AppC 'fun '(7)) 8))
 (check-exn (regexp (regexp-quote "OAZO Malformed ExprC: '(4 4)"))
            (lambda () (parse '{4 4})))
 (check-exn (regexp (regexp-quote "OAZO Malformed ExprC: '/"))
            (lambda () (parse '{+ / 3})))
 
 ;parse-fundef
-(check-equal? (parse-fundef '(func (abc bnm) : 1)) (FunDefC 'abc 'bnm 1)) 
+(check-equal? (parse-fundef '(func (abc bnm) : 1)) (FunDefC 'abc '(bnm) 1)) 
 (check-exn (regexp (regexp-quote "OAZO Malformed function structure"))
            (lambda () (parse-fundef '{4})))
 (check-exn (regexp (regexp-quote "OAZO Malformed function structure"))
@@ -137,21 +144,21 @@
 
 ;parse-prog
 (check-equal? (parse-prog '{{func {fun y} : {+ 1 2}} {func {fun2 x} : 1}})
-              (list (FunDefC 'fun 'y (binop '+ 1 2)) (FunDefC 'fun2 'x 1)))
+              (list (FunDefC 'fun '(y) (binop '+ 1 2)) (FunDefC 'fun2 '(x) 1)))
 (check-exn (regexp (regexp-quote "OAZO Malformed Program: 'x"))
            (lambda () (parse-prog 'x)))
 
 ;subst
 (check-equal? (subst 3 'x (LeqC 1 'x (binop '+ 'x 'y))) (LeqC 1 3 (binop '+ 3 'y)))
-(check-equal? (subst 4 'y (AppC 'fun 'y)) (AppC 'fun 4))
+(check-equal? (subst 4 'y (AppC 'fun '(y))) (AppC 'fun '(4)))
 
 ;get-fundef
 (check-exn (regexp (regexp-quote "OAZO reference to undefined function"))
            (lambda () (get-fundef 'x '())))
-(check-equal? (get-fundef 'subtract (list (FunDefC 'add '+ 4) (FunDefC 'mult '* 2)
-                                          (FunDefC 'subtract '- 4))) (FunDefC 'subtract '- 4))
+(check-equal? (get-fundef 'subtract (list (FunDefC 'add '(+) 4) (FunDefC 'mult '(*) 2)
+                                          (FunDefC 'subtract '(-) 4))) (FunDefC 'subtract '(-) 4))
 (check-exn (regexp (regexp-quote "OAZO reference to undefined function" ))
-           (lambda () (get-fundef 'x (list (FunDefC 'add '+ 4)))))
+           (lambda () (get-fundef 'x (list (FunDefC 'add '(+) 4)))))
 
 
 ;interp
@@ -159,14 +166,14 @@
 (check-equal? (interp (binop '- (binop '/ 4 2) 1) '()) 1)
 (check-equal? (interp (LeqC -1 2 5) '()) 2)
 (check-equal? (interp (LeqC 3 7 8) '()) 8)
-(check-equal? (interp (AppC 'x 1) (list (FunDefC 'x 'y (binop '+ 'y 1)))) 2)
+(check-equal? (interp (AppC 'x '(1)) (list (FunDefC 'x '(y) (binop '+ 'y 1)))) 2)
 (check-exn (regexp (regexp-quote "OAZO Malformed ExprC: 'x"))
            (lambda () (interp 'x '())))
 (check-exn (regexp (regexp-quote "OAZO Divide by 0 error"))
            (lambda () (interp (binop '/ 5 0) '())))
 
 ;interp-fns
-(check-equal? (interp-fns (list (FunDefC 'fun2 'x 1) (FunDefC 'main 'init (binop '+ 1 2)))) 3)
+(check-equal? (interp-fns (list (FunDefC 'fun2 '(x) 1) (FunDefC 'main '() (binop '+ 1 2)))) 3)
 
 ;top-interp
 (define prog '{
@@ -191,5 +198,4 @@
                              {func {main init} : {f 2}}}))
               16)
 
-
-
+;testing for multiple parameters
