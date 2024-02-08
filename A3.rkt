@@ -3,11 +3,11 @@
 (require typed/rackunit)
 
 ;--------------------------------------------------------------------------
-(struct FunDefC ([name : Symbol] [arg : Symbol] [body : ExprC]) #:transparent)
+(struct FunDefC ([name : Symbol] [params : (Listof Symbol)] [body : ExprC]) #:transparent)
 
 (define-type ExprC (U Real binop AppC LeqC Symbol))
 (struct binop ([op : Symbol] [l : ExprC] [r : ExprC]) #:transparent)
-(struct AppC ([id : Symbol] [exp : ExprC]) #:transparent)
+(struct AppC ([id : Symbol] [args : (Listof ExprC)]) #:transparent)
 (struct LeqC ([test : ExprC] [then : ExprC] [rest : ExprC]) #:transparent)
 
 (define ht (hash '+ + '- - '* * '/ /))
@@ -31,7 +31,7 @@
   (match s
     [(? real? r) r]
     [(list (? is-binop? op) l r) (binop op (parse l) (parse r))]
-    [(list (? not-keyword? id) exp) (AppC id (parse exp))]
+    [(list (? not-keyword? id) (list exps ...)) (AppC id (map parse exps))]
     [(list 'ifleq0? test then rest) (LeqC (parse test) (parse then) (parse rest))]
     [(? not-keyword? s) s]
     [other (error "OAZO Malformed ExprC:" s)]))
@@ -40,8 +40,8 @@
 ;Parses a Sexp into a FunDefC
 (define (parse-fundef [s : Sexp]) : FunDefC
   (match s
-    [(list 'func (list (? not-keyword? id1) (? not-keyword? id2)) ': expr)
-     (FunDefC id1 id2 (parse expr))]
+    [(list 'func (list (? not-keyword? id1) (list (? not-keyword? ids) ...)) ': expr)
+     (FunDefC id1 (cast ids (Listof Symbol)) (parse expr))]
     [other (error "OAZO Malformed function structure")]))
 
 ;Parse the entire program
@@ -52,6 +52,8 @@
     [other (error "OAZO Malformed Program:" s)]))
 
 ;---------------------------------------------------------------------------
+
+(define (subst-multiarg [what : (Listof ExprC)] [for : (Listof Symbol)] [in : ExprC]) : ExprC)
 
 ;Replaces all occurences of 'what' with 'for' from 'in'
 (define (subst [what : ExprC] [for : Symbol] [in : ExprC]) : ExprC
@@ -89,7 +91,7 @@
                        [else ((hash-ref ht op) (interp l fds) (interp r fds))])]
     [(AppC id exp)
      (match (get-fundef id fds)
-       [(FunDefC name param body) (interp (subst (interp exp fds) param body) fds)])]
+       [(FunDefC name params body) (interp (subst (interp exp fds) params body) fds)])]
     [(LeqC test then rest) (cond
                              [(<= (interp test fds) 0) (interp then fds)]
                              [else (interp rest fds)])]
