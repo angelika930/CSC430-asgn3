@@ -40,7 +40,7 @@
 ;Parses a Sexp into a FunDefC
 (define (parse-fundef [s : Sexp]) : FunDefC
   (match s
-    [(list 'func (list (? not-keyword? id1) (? not-keyword? ids) ...) ': expr)
+    [(list 'func  (list (? not-keyword? id1) (? not-keyword? ids) ...) ': expr)
      (FunDefC id1 (cast ids (Listof Symbol)) (parse expr))]
     [other (error "OAZO Malformed function structure")])) 
 
@@ -57,7 +57,10 @@
 (define (subst-multiarg [what : (Listof ExprC)] [for : (Listof Symbol)] [in : ExprC]) : ExprC
   (match what
     ['() in]
-    [(cons f r) (subst f (first for) (subst-multiarg r (rest for) in))]))
+    [(cons f r)
+      (cond
+        [(= (length what) (length for)) (subst f (first for) (subst-multiarg r (rest for) in))]
+        [else (error "OAZO: Wrong Number of Arguments")])]))
 
 
 
@@ -98,7 +101,9 @@
                        [else ((hash-ref ht op) (interp l fds) (interp r fds))])]
     [(AppC id Listexp)
      (match (get-fundef id fds)
-       [(FunDefC name params body) (interp (subst-multiarg  (map (lambda ([expr : ExprC]) (interp expr fds)) Listexp) params body) fds)])]
+       [(FunDefC name params body) (interp (subst-multiarg
+                                            (map (lambda ([expr : ExprC]) (interp expr fds)) Listexp) params body)
+                                           fds)])]
     [(LeqC test then rest) (cond
                              [(<= (interp test fds) 0) (interp then fds)]
                              [else (interp rest fds)])]
@@ -185,19 +190,6 @@
                  {func {sqr x} : {* x x}}
                  {func {main init} : {sqr 7}}
                  })
-;round
-(define round '{func {round x} : {ifleq0? {- x 0.499999} 0 {+ 1 {round {- x 1}}}}})
-(define round-top '{func {round-top x} : {ifleq0? x {- 0 {round {- 0 x}}} {round x}}})
-(check-equal? (top-interp (list round round-top '{func {main init} : {round-top 7.5}})) 8)
-(check-equal? (top-interp (list round round-top '{func {main init} : {round-top -7.4}})) -7)
-
-(check-equal? (top-interp prog) 5)
-(check-equal? (top-interp prog2) 49)
-(check-equal? (interp-fns
-               (parse-prog '{{func {f x} : {+ x 14}}
-                             {func {main init} : {f 2}}}))
-              16)
-
 (define prog3 '{
                 {func {f x x} : x}
                 {func {main} : {f x}}
@@ -212,8 +204,19 @@
                 {func {f x} : (+ x 2)}
                 {func {main} : {f 3 4 5}}
                 })
-;(check-equal? (top-interp prog5) '(5 6 7))
-;expected exception with message containing OAZO on test expression: '(top-interp '((func (f x) : (+ x 2)) (func (main) : (f 3 4 5))))
+(check-exn (regexp (regexp-quote "OAZO Malformed ExprC: 'x"))
+           (lambda () (top-interp prog3)))
+
+;expected exception with message containing OAZO on test expression:
+;'(top-interp '((func (f x) : (+ x 2)) (func (main) : (f 3 4 5))))
+
+;subst multi-arg
+(check-equal? (subst-multiarg (list 3 4) (list 'x 'y) (binop '+ 'x 'y)) (binop '+ 3 '4))
+(check-exn (regexp (regexp-quote "OAZO: Wrong Number of Arguments"))
+                   (lambda () (subst-multiarg (list 3) (list 'x 'y) (binop '+ 'x 'y))))
+
+
+
 
 ;round
 (define round '{func {round x} : {ifleq0? {- x 0.499999} 0 {+ 1 {round {- x 1}}}}})
@@ -229,7 +232,6 @@
               16)
 
 ;testing for multiple parameters
-
 (check-exn (regexp (regexp-quote "OAZO Malformed ExprC: 'x"))
            (lambda () (top-interp prog3)))
 
@@ -238,14 +240,9 @@
                      {func {main} : {f 1 2}}}))
       3)
 
- (check-exn #px"OAZO Malformed ExprC: 'y"
-            (λ ()
-              (interp-fns
-               (parse-prog '{{func {f x y} : {+ x y}}
-                             {func {main} : {f 1}}}))))
+
 
 ;Testing for zero parameters
-(check-equal? (top-interp prog4) 5)
-
+(check-equal? (top-interp prog4) 5) 
 
 
