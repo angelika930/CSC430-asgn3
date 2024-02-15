@@ -6,9 +6,15 @@
 (struct FunDefC ([name : Symbol] [params : (Listof Symbol)] [body : ExprC]) #:transparent)
 
 (define-type ExprC (U Real binop AppC LeqC Symbol))
+
+(define-type Env (Listof var))
+(struct var ([name : Symbol] [value : Real]))
+(define baseEnv '())
+
 (struct binop ([op : Symbol] [l : ExprC] [r : ExprC]) #:transparent)
 (struct AppC ([id : Symbol] [args : (Listof ExprC)]) #:transparent)
 (struct LeqC ([test : ExprC] [then : ExprC] [rest : ExprC]) #:transparent)
+
 
 (define ht (hash '+ + '- - '* * '/ /))
 
@@ -89,30 +95,49 @@
        [(equal? n (FunDefC-name (first fds))) (first fds)]
        [else (get-fundef n (rest fds))])]))
 
+;Gets a Var from a list with name n
+(define (get-var [n : Symbol] [env : (Listof var)]) : var
+  (cond
+    [(empty? env) (error 'get-var "OAZO reference to undefined var")]
+    [(cons? env)
+     (cond
+       [(equal? n (var-name (first env))) (first env)]
+       [else (get-var n (rest env))])]))
+
 ;-------------------------------------------------------------------------
+
+;Extends the given enviorment
+(define (extend [env : Env] [values : (Listof Real)] [names : (Listof Symbol)]) : Env
+  (match values
+    ['() env]
+    [(cons f r) (cons (var (first names) f) (extend env r (rest names)))]))
 
 
 ;Interprets an AST (as an ExprC) into a real number
-(define (interp [a : ExprC] [fds : (Listof FunDefC)]) : Real
+(define (interp [a : ExprC] [fds : (Listof FunDefC)] [env : Env]) : Real
   (match a
     [(? real? r) r]
     [(binop op l r) (cond
-                       [(and (eq? op '/) (eq? (interp r fds) 0)) (error "OAZO Divide by 0 error")]
-                       [else ((hash-ref ht op) (interp l fds) (interp r fds))])]
+                       [(and (eq? op '/) (eq? (interp r fds env) 0)) (error "OAZO Divide by 0 error")]
+                       [else ((hash-ref ht op) (interp l fds env) (interp r fds env))])]
     [(AppC id Listexp)
      (match (get-fundef id fds)
-       [(FunDefC name params body) (interp (subst-multiarg
-                                            (map (lambda ([expr : ExprC]) (interp expr fds)) Listexp) params body)
-                                           fds)])]
+       [(FunDefC name params body)
+        (define arglist (map (lambda ([expr : ExprC]) (interp expr fds env)) Listexp))
+        (define env2 (extend env arglist params))
+        (interp body fds env2)])]
+    ;(interp (subst-multiarg (map (lambda ([expr : ExprC]) (interp expr fds env)) Listexp) params body) fds env)
     [(LeqC test then rest) (cond
-                             [(<= (interp test fds) 0) (interp then fds)]
-                             [else (interp rest fds)])]
-    [other (error "OAZO Malformed ExprC:" a)]))
+                             [(<= (interp test fds env) 0) (interp then fds env)]
+                             [else (interp rest fds env)])]
+    [(? symbol? s) (var-value (get-var s env))]))
 
+
+(check-equal? (interp 'x '() (list (var 'x 4))) 4)
 
 ;Find the main function and interp it
 (define (interp-fns [l : (Listof FunDefC)]) : Real
-  (interp (AppC 'main '()) l))
+  (interp (AppC 'main '()) l baseEnv))
 
 
 ;Wrapper for our praser and interpretor 
@@ -167,15 +192,15 @@
 
 
 ;interp
-(check-equal? (interp (binop '+ (binop '* 2 3) 2) '()) 8)
-(check-equal? (interp (binop '- (binop '/ 4 2) 1) '()) 1)
-(check-equal? (interp (LeqC -1 2 5) '()) 2)
-(check-equal? (interp (LeqC 3 7 8) '()) 8)
-(check-equal? (interp (AppC 'x '(1)) (list (FunDefC 'x '(y) (binop '+ 'y 1)))) 2)
-(check-exn (regexp (regexp-quote "OAZO Malformed ExprC: 'x"))
-           (lambda () (interp 'x '())))
+(check-equal? (interp (binop '+ (binop '* 2 3) 2) '() '()) 8)
+(check-equal? (interp (binop '- (binop '/ 4 2) 1) '() '()) 1)
+(check-equal? (interp (LeqC -1 2 5) '() '()) 2)
+(check-equal? (interp (LeqC 3 7 8) '() '()) 8)
+(check-equal? (interp (AppC 'x '(1)) (list (FunDefC 'x '(y) (binop '+ 'y 1))) '()) 2)
+(check-exn (regexp (regexp-quote "get-var: OAZO reference to undefined var"))
+           (lambda () (interp 'x '() '())))
 (check-exn (regexp (regexp-quote "OAZO Divide by 0 error"))
-           (lambda () (interp (binop '/ 5 0) '())))
+           (lambda () (interp (binop '/ 5 0) '() '())))
 
 ;interp-fns
 (check-equal? (interp-fns (list (FunDefC 'fun2 '(x) 1) (FunDefC 'main '() (binop '+ 1 2)))) 3)
@@ -204,7 +229,7 @@
                 {func {f x} : (+ x 2)}
                 {func {main} : {f 3 4 5}}
                 })
-(check-exn (regexp (regexp-quote "OAZO Malformed ExprC: 'x"))
+(check-exn (regexp (regexp-quote "get-var: OAZO reference to undefined var"))
            (lambda () (top-interp prog3)))
 
 ;expected exception with message containing OAZO on test expression:
@@ -232,7 +257,7 @@
               16)
 
 ;testing for multiple parameters
-(check-exn (regexp (regexp-quote "OAZO Malformed ExprC: 'x"))
+(check-exn (regexp (regexp-quote "get-var: OAZO reference to undefined var"))
            (lambda () (top-interp prog3)))
 
 (check-equal? (interp-fns
