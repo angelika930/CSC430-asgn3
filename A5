@@ -1,0 +1,269 @@
+#lang typed/racket
+
+(require typed/rackunit)
+
+;--------------------------------------------------------------------------
+(struct FunDefC ([params : (Listof Symbol)] [body : ExprC]) #:transparent)
+
+(define-type ExprC (U Value AppC LeqC Symbol))
+
+(define-type Env (Listof var))
+(define-type Value (U Real Boolean String CloV PrimV))
+;(define-type Boolean
+;  [bind () (name : #f)])
+(struct var ([name : Symbol] [value : Value]))
+(define baseEnv '())
+
+(struct AppC ([id : Symbol] [args : (Listof ExprC)]) #:transparent)
+(struct LeqC ([test : ExprC] [then : ExprC] [rest : ExprC]) #:transparent)
+(struct CloV ([params : (Listof Symbol)] [body : ExprC] [env : Env]) #:transparent)
+(struct PrimV ([func : (->* (Value) (Value Value) Value)]))
+
+
+
+(define ht (hash '+ add '- sub '* mult '/ div 'equal? equal?))
+
+;---------------------------------------------------------------------------
+
+;Checks if a given argument is a binop
+(: is-binop? (Any -> Boolean : #:+ Symbol))
+(define (is-binop? sym)
+  (and (symbol? sym) (hash-has-key? ht sym)))
+
+;Checks if a given argument is a keyword
+(: not-keyword? (Any -> Boolean : #:+ Symbol))
+(define (not-keyword? sym)
+  (and (symbol? sym) (not (hash-has-key? ht sym)) (not (or (eq? 'ifleq0? sym) (eq? 'func sym) (eq? ': sym)))))
+
+;---------------------------------------------------------------------------
+
+(define (add [op1 : Value] [op2 : Value]) : Real
+  (cond
+    [(or (not (real? op1)) (not (real? op2))) (error "OAZO: Input is not a Number")]
+    [else (+ op1 op2)]))
+
+(define (sub [op1 : Value] [op2 : Value]) : Real
+  (cond
+    [(or (not (real? op1)) (not (real? op2))) (error "OAZO: Input is not a Number")]
+    [else (- op1 op2)]))
+
+(define (mult [op1 : Value] [op2 : Value]) : Real
+  (cond
+    [(or (not (real? op1)) (not (real? op2))) (error "OAZO: Input is not a Number")]
+    [else (* op1 op2)]))
+
+(define (div [op1 : Value] [op2 : Value]) : Real
+  (cond
+    [(or (not (real? op1)) (not (real? op2))) (error "OAZO: Input is not a Number")]
+    [(eq? op2 0) (error " OAZO: Divisor cannot be 0")]
+    [else (/ op1 op2)]))
+
+(define (less-than [op1 : Value] [op2 : Value]) : Boolean
+  (cond
+    [(or (not (real? op1)) (not (real? op2))) (error "OAZO: Input is not a Number")]
+    [(eq? op2 0) (error " OAZO: Divisor cannot be 0")]
+    [else (<= op1 op2)]))
+
+(define (serialize [msg : Value]) : String
+  (match msg
+    [(? real? r) (~v r)]
+    [#t "true"]
+    [#f "false"]
+    [CloV "#<procedure>"]
+    [PrimV "#<primop>"]))
+
+(define (err [msg : Value])
+  (error 'user-error (serialize msg)))
+
+
+
+;---------------------------------------------------------------------------
+
+;Parses an Sexpression into an ExprC
+(define (parse [s : Sexp]) : ExprC
+  (match s
+    [(? real? r) r]
+    [(? string? s) s]
+    [(? boolean? b) b]
+    [(list 'anon (list (? not-keyword? ids) ...) ': expr) (FunDefC (cast ids (Listof Symbol)) (parse expr))]
+    [(list (? not-keyword? id) exps ...) (AppC id (map parse exps))]
+    [(list 'ifleq0? test then rest) (LeqC (parse test) (parse then) (parse rest))]
+    [(? not-keyword? s) s]
+    [other (error "OAZO Malformed ExprC:" s)]))
+
+
+;Parses a Sexp into a FunDefC
+(define (parse-fundef [s : Sexp]) : FunDefC
+  (match s
+    [(list 'func  (list (? not-keyword? ids) ...) ': expr)
+     (FunDefC (cast ids (Listof Symbol)) (parse expr))]
+    [other (error "OAZO Malformed function structure")])) 
+
+;Parse the entire program 
+(define (parse-prog [s : Sexp]) : (Listof FunDefC)
+  (match s
+    ['() '()]
+    [(cons f r) (cons (parse-fundef f) (parse-prog r))]
+    [other (error "OAZO Malformed Program:" s)]))
+
+;---------------------------------------------------------------------------
+
+;Gets a FunDefC from a list with name n
+(define (get-fundef [n : Symbol] [fds : (Listof FunDefC)]) : FunDefC
+  (cond
+    [(empty? fds)
+     (error 'get-fundef "OAZO reference to undefined function")]
+    [(cons? fds)
+     (cond
+       [(equal? n (FunDefC (first fds))) (first fds)]
+       [else (get-fundef n (rest fds))])]))
+
+;Gets a Var from a list with name n
+(define (get-var [n : Symbol] [env : (Listof var)]) : var
+  (cond
+    [(empty? env) (error 'get-var "OAZO reference to undefined var")]
+    [(cons? env)
+     (cond
+       [(equal? n (var-name (first env))) (first env)]
+       [else (get-var n (rest env))])]))
+
+;-------------------------------------------------------------------------
+
+;Extends the given environment
+(define (extend [env : Env] [values : (Listof Value)] [names : (Listof Symbol)]) : Env
+  (match values
+    ['() env]
+    [(cons f r) (cons (var (first names) f) (extend env r (rest names)))]))
+
+
+;Interprets an AST (as an ExprC) into a real number
+(define (interp [a : ExprC] [fds : (Listof FunDefC)] [env : Env]) : Value
+  (match a
+    [(? real? r) r]
+    [(AppC id Listexp)
+     (match (get-fundef id fds)
+       [(FunDefC params body)
+        (define arglist (map (lambda ([expr : ExprC]) (interp expr fds env)) Listexp))
+        (define env2 (extend env arglist params))
+        (interp body fds env2)])]
+    ;(interp (subst-multiarg (map (lambda ([expr : ExprC]) (interp expr fds env)) Listexp) params body) fds env)
+    [(LeqC test then rest) (cond
+                             [(<= (interp test fds env) 0) (interp then fds env)]
+                             [else (interp rest fds env)])]
+    [(? symbol? s) (var-value (get-var s env))]))
+
+
+(check-equal? (interp 'x '() (list (var 'x 4))) 4)
+
+;Find the main function and interp it
+(define (interp-fns [l : (Listof FunDefC)]) : Real
+  (interp (AppC 'main '()) l baseEnv))
+
+
+;Wrapper for our praser and interpretor 
+(: top-interp (Sexp -> Real))
+(define (top-interp fun-sexps)
+  (interp-fns (parse-prog fun-sexps)))
+
+;-------------------------------------------------------------------------
+
+;is-binop?
+(check-equal? (is-binop? '*) #t)
+(check-equal? (is-binop? 'f) #f)
+
+;not-keyword?
+(check-equal? (not-keyword? '*) #f)
+(check-equal? (not-keyword? '+) #f)
+(check-equal? (not-keyword? 'abc) #t)
+
+;parse
+(check-equal? (parse '{ifleq0? x {fun 7} 8}) (LeqC 'x (AppC 'fun '(7)) 8))
+(check-exn (regexp (regexp-quote "OAZO Malformed ExprC: '(4 4)"))
+           (lambda () (parse '{4 4})))
+(check-exn (regexp (regexp-quote "OAZO Malformed ExprC: '/"))
+           (lambda () (parse '{+ / 3})))
+
+;parse-fundef
+(check-exn (regexp (regexp-quote "OAZO Malformed function structure"))
+           (lambda () (parse-fundef '{4})))
+(check-exn (regexp (regexp-quote "OAZO Malformed function structure"))
+           (lambda () (parse-fundef '{func {+ 4} : 13})))
+
+;parse-prog
+(check-exn (regexp (regexp-quote "OAZO Malformed Program: 'x"))
+           (lambda () (parse-prog 'x)))
+
+
+
+;get-fundef
+(check-exn (regexp (regexp-quote "OAZO reference to undefined function"))
+           (lambda () (get-fundef 'x '())))
+
+
+
+;interp
+(check-equal? (interp (LeqC -1 2 5) '() '()) 2)
+(check-equal? (interp (LeqC 3 7 8) '() '()) 8)
+(check-exn (regexp (regexp-quote "get-var: OAZO reference to undefined var"))
+           (lambda () (interp 'x '() '())))
+
+
+;
+
+;top-interp
+(define prog '{
+               {func {fib x} : {ifleq0? {- x 1} 1 {+ {fib {- x 1}} {fib {- x 2}}}}}
+               {func {main init} : {fib 4}}
+               })
+
+(define prog2 ' {
+                 {func {sqr x} : {* x x}}
+                 {func {main init} : {sqr 7}}
+                 })
+(define prog3 '{
+                {func {f x x} : x}
+                {func {main} : {f x}}
+                })
+
+(define prog4 '{
+                {func {five} : 5}
+                {func {main} : {five}}
+                })
+
+(define prog5 '{
+                {func {f x} : (+ x 2)}
+                {func {main} : {f 3 4 5}}
+                })
+(check-exn (regexp (regexp-quote "get-var: OAZO reference to undefined var"))
+           (lambda () (top-interp prog3)))
+
+
+
+
+
+;round
+(define round '{func {round x} : {ifleq0? {- x 0.499999} 0 {+ 1 {round {- x 1}}}}})
+(define round-top '{func {round-top x} : {ifleq0? x {- 0 {round {- 0 x}}} {round x}}})
+(check-equal? (top-interp (list round round-top '{func {main init} : {round-top 7.5}})) 8)
+(check-equal? (top-interp (list round round-top '{func {main init} : {round-top -7.4}})) -7)
+
+(check-equal? (top-interp prog) 5)
+(check-equal? (top-interp prog2) 49)
+(check-equal? (interp-fns
+               (parse-prog '{{func {f x} : {+ x 14}}
+                             {func {main init} : {f 2}}}))
+              16)
+
+;testing for multiple parameters
+(check-exn (regexp (regexp-quote "get-var: OAZO reference to undefined var"))
+           (lambda () (top-interp prog3)))
+
+(check-equal? (interp-fns
+       (parse-prog '{{func {f x y} : {+ x y}}
+                     {func {main} : {f 1 2}}}))
+      3)
+
+
+
+;Testing for zero parameters
+(check-equal? (top-interp prog4) 5) 
