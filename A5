@@ -3,7 +3,7 @@
 (require typed/rackunit)
 
 ;--------------------------------------------------------------------------
-(struct FunDefC ([params : (Listof Symbol)] [body : ExprC]) #:transparent)
+(struct FunDefC ([params : (Listof Symbol)] [body : ExprC] [env : Env]) #:transparent)
 
 (define-type ExprC (U Value AppC LeqC Symbol))
 
@@ -14,7 +14,7 @@
 (struct var ([name : Symbol] [value : Value]))
 (define baseEnv '())
 
-(struct AppC ([id : Symbol] [args : (Listof ExprC)]) #:transparent)
+(struct AppC ([id : ExprC] [args : (Listof ExprC)]) #:transparent)
 (struct LeqC ([test : ExprC] [then : ExprC] [rest : ExprC]) #:transparent)
 (struct CloV ([params : (Listof Symbol)] [body : ExprC] [env : Env]) #:transparent)
 (struct PrimV ([func : (->* (Value) (Value Value) Value)]))
@@ -37,7 +37,7 @@
 
 ;---------------------------------------------------------------------------
 
-(define (add [op1 : Value] [op2 : Value]) : Real
+(define (add [args ) : Real
   (cond
     [(or (not (real? op1)) (not (real? op2))) (error "OAZO: Input is not a Number")]
     [else (+ op1 op2)]))
@@ -141,12 +141,12 @@
   (match a
     [(? real? r) r]
     [(AppC id Listexp)
-     (match (get-fundef id fds)
-       [(FunDefC params body)
+     (match (interp id fds env)
+       [(CloV params body env)
         (define arglist (map (lambda ([expr : ExprC]) (interp expr fds env)) Listexp))
         (define env2 (extend env arglist params))
         (interp body fds env2)])]
-    ;(interp (subst-multiarg (map (lambda ([expr : ExprC]) (interp expr fds env)) Listexp) params body) fds env)
+    [(PrimV )]
     [(LeqC test then rest) (cond
                              [(<= (interp test fds env) 0) (interp then fds env)]
                              [else (interp rest fds env)])]
