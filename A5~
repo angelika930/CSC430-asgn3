@@ -3,22 +3,25 @@
 (require typed/rackunit)
 
 ;--------------------------------------------------------------------------
-(struct FunDefC ([params : (Listof Symbol)] [body : ExprC]) #:transparent)
+(struct FunDefC ([params : (Listof Symbol)] [body : ExprC] [env : Env]) #:transparent)
 
-(define-type ExprC (U Value FunDefC AppC LeqC Symbol))
+(define-type ExprC (U Value AppC LeqC Symbol))
 
 (define-type Env (Listof var))
 (define-type Value (U Real Boolean String CloV PrimV))
-
 ;(define-type Boolean
 ;  [bind () (name : #f)])
 (struct var ([name : Symbol] [value : Value]))
+(define baseEnv '())
 
 (struct AppC ([id : ExprC] [args : (Listof ExprC)]) #:transparent)
 (struct LeqC ([test : ExprC] [then : ExprC] [rest : ExprC]) #:transparent)
 (struct CloV ([params : (Listof Symbol)] [body : ExprC] [env : Env]) #:transparent)
-(struct PrimV ([func : ((Listof Value) -> Value)]))
+(struct PrimV ([func : (->* (Value) (Value Value) Value)]))
 
+
+
+(define ht (hash '+ add '- sub '* mult '/ div 'equal? equal?))
 
 ;---------------------------------------------------------------------------
 
@@ -34,49 +37,44 @@
 
 ;---------------------------------------------------------------------------
 
-(define (add [args : (Listof Value)]) : Real
-  (match args
-    [(list (? real? op1) (? real? op2)) (+ op1 op2)]
-    [other (error 'add "OAZO Input invalid")]))
+(define (add [args ) : Real
+  (cond
+    [(or (not (real? op1)) (not (real? op2))) (error "OAZO: Input is not a Number")]
+    [else (+ op1 op2)]))
 
-(define (sub [args : (Listof Value)]) : Real
-  (match args
-    [(list (? real? op1) (? real? op2)) (- op1 op2)]
-    [other (error 'sub "OAZO Input invalid")]))
+(define (sub [op1 : Value] [op2 : Value]) : Real
+  (cond
+    [(or (not (real? op1)) (not (real? op2))) (error "OAZO: Input is not a Number")]
+    [else (- op1 op2)]))
 
-(define (mult [args : (Listof Value)]) : Real
-  (match args
-    [(list (? real? op1) (? real? op2)) (* op1 op2)]
-    [other (error 'mult "OAZO Input invalid")]))
+(define (mult [op1 : Value] [op2 : Value]) : Real
+  (cond
+    [(or (not (real? op1)) (not (real? op2))) (error "OAZO: Input is not a Number")]
+    [else (* op1 op2)]))
 
-(define (div [args : (Listof Value)]) : Real
-  (match args
-    [(list (? real? op1) 0) (error " OAZO: Divisor cannot be 0")]
-    [(list (? real? op1) (? real? op2)) (/ op1 op2)]
-    [other (error 'div "OAZO Input invalid")]))
+(define (div [op1 : Value] [op2 : Value]) : Real
+  (cond
+    [(or (not (real? op1)) (not (real? op2))) (error "OAZO: Input is not a Number")]
+    [(eq? op2 0) (error " OAZO: Divisor cannot be 0")]
+    [else (/ op1 op2)]))
 
-(define (less-than [args : (Listof Value)]) : Boolean
-  (match args
-    [(list (? real? op1) (? real? op2)) (<= op1 op2)]
-    [other (error 'less-than "OAZO Input invalid")]))
+(define (less-than [op1 : Value] [op2 : Value]) : Boolean
+  (cond
+    [(or (not (real? op1)) (not (real? op2))) (error "OAZO: Input is not a Number")]
+    [(eq? op2 0) (error " OAZO: Divisor cannot be 0")]
+    [else (<= op1 op2)]))
 
-(define (serialize  [args : (Listof Value)]) : String
-  (match args
-    [(list (? real? r)) (~v r)]
-    [(list #t) "true"]
-    [(list #f) "false"]
-    [(list CloV) "#<procedure>"]
-    [(list PrimV) "#<primop>"]
-    [other (error 'serialize "OAZO too many args")]))
+(define (serialize [msg : Value]) : String
+  (match msg
+    [(? real? r) (~v r)]
+    [#t "true"]
+    [#f "false"]
+    [CloV "#<procedure>"]
+    [PrimV "#<primop>"]))
 
-(define (err [args : (Listof Value)])
-  (error 'user-error (serialize args)))
+(define (err [msg : Value])
+  (error 'user-error (serialize msg)))
 
-(define ht (hash '+ add '- sub '* mult '/ div 'equal? equal?))
-(define baseEnv (list
-                 (var '+ (PrimV add))
-                 (var '- (PrimV sub))
-                 (var '* (PrimV mult))))
 
 
 ;---------------------------------------------------------------------------
@@ -110,6 +108,16 @@
 
 ;---------------------------------------------------------------------------
 
+;Gets a FunDefC from a list with name n
+(define (get-fundef [n : Symbol] [fds : (Listof FunDefC)]) : FunDefC
+  (cond
+    [(empty? fds)
+     (error 'get-fundef "OAZO reference to undefined function")]
+    [(cons? fds)
+     (cond
+       [(equal? n (FunDefC (first fds))) (first fds)]
+       [else (get-fundef n (rest fds))])]))
+
 ;Gets a Var from a list with name n
 (define (get-var [n : Symbol] [env : (Listof var)]) : var
   (cond
@@ -132,32 +140,30 @@
 (define (interp [a : ExprC] [fds : (Listof FunDefC)] [env : Env]) : Value
   (match a
     [(? real? r) r]
-    [(FunDefC params body) (CloV params body env)]
     [(AppC id Listexp)
      (match (interp id fds env)
        [(CloV params body env)
         (define arglist (map (lambda ([expr : ExprC]) (interp expr fds env)) Listexp))
         (define env2 (extend env arglist params))
-        (interp body fds env2)]
-       [(PrimV func) (func (map (lambda ([expr : ExprC]) (interp expr fds env)) Listexp))]
-       [other (error 'interp "OAZO not a function")])]
-;    [(LeqC test then rest) (cond
-;                            [(<= (interp test fds env) 0) (interp then fds env)]
-;                           [else (interp rest fds env)])]
+        (interp body fds env2)])]
+    [(PrimV )]
+    [(LeqC test then rest) (cond
+                             [(<= (interp test fds env) 0) (interp then fds env)]
+                             [else (interp rest fds env)])]
     [(? symbol? s) (var-value (get-var s env))]))
 
 
 (check-equal? (interp 'x '() (list (var 'x 4))) 4)
 
 ;Find the main function and interp it
-(define (interp-fns [l : (Listof FunDefC)]) : Value
+(define (interp-fns [l : (Listof FunDefC)]) : Real
   (interp (AppC 'main '()) l baseEnv))
 
 
 ;Wrapper for our praser and interpretor 
-(: top-interp (Sexp -> String))
+(: top-interp (Sexp -> Real))
 (define (top-interp fun-sexps)
-  (serialize (list (interp-fns (parse-prog fun-sexps)))))
+  (interp-fns (parse-prog fun-sexps)))
 
 ;-------------------------------------------------------------------------
 
@@ -174,7 +180,7 @@
 (check-equal? (parse '{ifleq0? x {fun 7} 8}) (LeqC 'x (AppC 'fun '(7)) 8))
 (check-exn (regexp (regexp-quote "OAZO Malformed ExprC: '(4 4)"))
            (lambda () (parse '{4 4})))
-(check-exn (regexp (regexp-quote "OAZO Malformed ExprC: '(+ / 3)"))
+(check-exn (regexp (regexp-quote "OAZO Malformed ExprC: '/"))
            (lambda () (parse '{+ / 3})))
 
 ;parse-fundef
@@ -189,9 +195,15 @@
 
 
 
+;get-fundef
+(check-exn (regexp (regexp-quote "OAZO reference to undefined function"))
+           (lambda () (get-fundef 'x '())))
+
+
+
 ;interp
-;(check-equal? (interp (LeqC -1 2 5) '() '()) 2)
-;(check-equal? (interp (LeqC 3 7 8) '() '()) 8)
+(check-equal? (interp (LeqC -1 2 5) '() '()) 2)
+(check-equal? (interp (LeqC 3 7 8) '() '()) 8)
 (check-exn (regexp (regexp-quote "get-var: OAZO reference to undefined var"))
            (lambda () (interp 'x '() '())))
 
@@ -230,10 +242,10 @@
 
 
 ;round
-(define round '{anon {round x} : {ifleq0? {- x 0.499999} 0 {+ 1 {round {- x 1}}}}})
-(define round-top '{anon {round-top x} : {ifleq0? x {- 0 {round {- 0 x}}} {round x}}})
-(check-equal? (top-interp (list round round-top '{anon {main init} : {round-top 7.5}})) 8)
-(check-equal? (top-interp (list round round-top '{anon {main init} : {round-top -7.4}})) -7)
+(define round '{func {round x} : {ifleq0? {- x 0.499999} 0 {+ 1 {round {- x 1}}}}})
+(define round-top '{func {round-top x} : {ifleq0? x {- 0 {round {- 0 x}}} {round x}}})
+(check-equal? (top-interp (list round round-top '{func {main init} : {round-top 7.5}})) 8)
+(check-equal? (top-interp (list round round-top '{func {main init} : {round-top -7.4}})) -7)
 
 (check-equal? (top-interp prog) 5)
 (check-equal? (top-interp prog2) 49)
