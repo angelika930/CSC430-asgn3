@@ -5,7 +5,7 @@
 ;--------------------------------------------------------------------------
 (struct FunDefC ([params : (Listof Symbol)] [body : ExprC]) #:transparent)
 
-(define-type ExprC (U Value FunDefC AppC LeqC Symbol))
+(define-type ExprC (U Value FunDefC AppC IfC Symbol))
 
 (define-type Env (Listof Binding))
 (define-type Value (U Real Boolean String CloV PrimV LamC))
@@ -13,7 +13,7 @@
 (struct Binding ([name : Symbol] [val : Value]))
 
 (struct AppC ([id : ExprC] [args : (Listof ExprC)]) #:transparent)
-(struct LeqC ([test : ExprC] [then : ExprC] [rest : ExprC]) #:transparent)
+(struct IfC ([if : ExprC] [then : ExprC] [else : ExprC]) #:transparent)
 (struct CloV ([params : (Listof Symbol)] [body : ExprC] [env : Env]) #:transparent)
 (struct PrimV ([func : ((Listof Value) -> Value)]))
 (struct LamC ([arg : Symbol] [body : ExprC]) #:transparent)
@@ -92,9 +92,11 @@
     [(? real? r) r]
     [(? string? s) s]
     [(list 'anon (list (? not-keyword? ids) ...) ': expr) (FunDefC (cast ids (Listof Symbol)) (parse expr))]
+    [(list 'if ifExpr 'then thenExpr 'else elseExpr) (IfC (parse ifExpr) (parse thenExpr) (parse elseExpr))]
     [(list expr exps ...) (AppC (parse expr) (map parse exps))]
     [(? not-keyword? s) s]
     [other (error "OAZO Malformed ExprC:" s)]))
+
 
 
 ;---------------------------------------------------------------------------
@@ -143,11 +145,12 @@
 ;changed top-interp to one in specs
 ;added true and false literal bindings to base env
 ;added definition of LamC
- 
+
 
 ;fixed AppC parsing to not use function names
 ;Added PrimV and CloV passup to interp
 ;Added all needed test-cases
+;Added parsing for if statements
 
 ;-------------------------------------------------------------------------
 
@@ -158,12 +161,7 @@
 (check-equal? (not-keyword? 'abc) #t)
 
 ;parse
-;(check-equal? (parse '{ifleq0? x {fun 7} 8}) (LeqC 'x (AppC 'fun '(7)) 8))
-;(check-exn (regexp (regexp-quote "OAZO Malformed ExprC: '(4 4)")) 
-           ;(lambda () (parse '{4 4}))) Not a parse error
-;(check-exn (regexp (regexp-quote "OAZO Malformed ExprC: '(+ / 3)"))
-           ;(lambda () (parse '{+ / 3}))) Not a parse error
-
+(check-equal? (parse '{if true then 1 else 2}) (IfC 'true 1 2))
 (check-equal? (parse "hello") "hello")
 
 
