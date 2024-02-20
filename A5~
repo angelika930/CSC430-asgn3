@@ -15,7 +15,7 @@
 (struct AppC ([id : ExprC] [args : (Listof ExprC)]) #:transparent)
 (struct IfC ([if : ExprC] [then : ExprC] [else : ExprC]) #:transparent)
 (struct CloV ([params : (Listof Symbol)] [body : ExprC] [env : Env]) #:transparent)
-(struct PrimV ([func : ((Listof Value) -> Value)]))
+(struct PrimV ([func : ((Listof Value) -> Value)])  #:transparent)
 (struct LamC ([arg : Symbol] [body : ExprC]) #:transparent)
 
  
@@ -24,7 +24,8 @@
 ;Checks if a given argument is a keyword
 (: not-keyword? (Any -> Boolean : #:+ Symbol))
 (define (not-keyword? sym)
-  (and (symbol? sym) (not (or (eq? 'if sym) (eq? 'let sym) (eq? 'anon sym) (eq? ': sym) (eq? '<- sym)))))
+  (and (symbol? sym) (not (or (eq? 'if sym) (eq? 'then sym) (eq? 'else sym)
+                              (eq? 'let sym) (eq? 'anon sym) (eq? ': sym) (eq? '<- sym)))))
 
 ;---------------------------------------------------------------------------
 
@@ -131,6 +132,10 @@
         (interp body env2)]
        [(PrimV func) (func (map (lambda ([expr : ExprC]) (interp expr env)) Listexp))]
        [other (error 'interp "OAZO not a function")])]
+    [(IfC ifExpr thenExpr elseExpr) (match (interp ifExpr env)
+                                      [#t (interp thenExpr env)]
+                                      [#f (interp elseExpr env)]
+                                      [other (error "OAZO not boolean ~v" ifExpr)])]
     [(? symbol? s) (lookup s env)]
     [(? PrimV? v) v] ;Pass up
     [(? CloV? v) v])) ;Pass up
@@ -177,6 +182,11 @@
 
 (check-exn (regexp (regexp-quote "lookup: name not found: 'x"))
            (lambda () (interp 'x '())))
+
+(check-equal? (interp (IfC 'true 1 0) baseEnv) 1)
+(check-equal? (interp (IfC 'false 1 0) baseEnv) 0)
+(check-exn (regexp (regexp-quote "OAZO not boolean"))
+           (lambda () (interp (IfC 7 1 0) '())))
 
 
 ;Prim Functions
