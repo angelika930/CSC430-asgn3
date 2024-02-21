@@ -3,9 +3,7 @@
 (require typed/rackunit)
 
 ;--------------------------------------------------------------------------
-(struct FunDefC ([params : (Listof Symbol)] [body : ExprC]) #:transparent)
-
-(define-type ExprC (U Value FunDefC AppC IfC Symbol))
+(define-type ExprC (U Value LamC AppC IfC Symbol))
 
 (define-type Env (Listof Binding))
 (define-type Value (U Real Boolean String CloV PrimV LamC))
@@ -16,7 +14,7 @@
 (struct IfC ([if : ExprC] [then : ExprC] [else : ExprC]) #:transparent)
 (struct CloV ([params : (Listof Symbol)] [body : ExprC] [env : Env]) #:transparent)
 (struct PrimV ([func : ((Listof Value) -> Value)]) #:transparent)
-(struct LamC ([arg : Symbol] [body : ExprC]) #:transparent)
+(struct LamC ([arg : (Listof Symbol)] [body : ExprC]) #:transparent)
 
  
 ;---------------------------------------------------------------------------
@@ -24,7 +22,8 @@
 ;Checks if a given argument is a keyword
 (: not-keyword? (Any -> Boolean : #:+ Symbol))
 (define (not-keyword? sym)
-  (and (symbol? sym) (not (or (eq? 'if sym) (eq? 'let sym) (eq? 'anon sym) (eq? ': sym) (eq? '<- sym)))))
+  (and (symbol? sym) (not (or (eq? 'if sym) (eq? 'then sym) (eq? 'else sym) (eq? 'let sym)
+                              (eq? 'anon sym) (eq? ': sym) (eq? '<- sym)))))
 
 ;---------------------------------------------------------------------------
 
@@ -91,13 +90,13 @@
   (match s
     [(? real? r) r]
     [(? string? s) s]
-    ;[(list 'let (list (Binding b) ...) expr) (lambda (list b) (parse expr)) ]
-    [(list 'anon (list (? not-keyword? ids) ...) ': expr) (FunDefC (cast ids (Listof Symbol)) (parse expr))]
+    [(list 'let (list (? not-keyword? keys) '<- args) ... expr) (AppC (LamC (cast keys (Listof Symbol)) (parse expr))
+                                                                      (map parse (cast args (Listof Sexp))))]
+    [(list 'anon (list (? not-keyword? ids) ...) ': expr) (LamC (cast ids (Listof Symbol)) (parse expr))]
     [(list 'if ifExpr 'then thenExpr 'else elseExpr) (IfC (parse ifExpr) (parse thenExpr) (parse elseExpr))]
     [(list expr exps ...) (AppC (parse expr) (map parse exps))]
     [(? not-keyword? s) s]
     [other (error "OAZO Malformed ExprC:" s)]))
-
 
 
 ;---------------------------------------------------------------------------
@@ -123,8 +122,7 @@
 (define (interp [e : ExprC] [env : Env]) : Value
   (match e
     [(? real? r) r]
-   ; [(LamC a b) (CloV a b env)]
-    [(FunDefC params body) (CloV params body env)]   ;keep?
+    [(LamC params body) (CloV params body env)]
     [(AppC id Listexp)
      (match (interp id env)
        [(CloV params body env)
@@ -133,6 +131,10 @@
         (interp body env2)]
        [(PrimV func) (func (map (lambda ([expr : ExprC]) (interp expr env)) Listexp))]
        [other (error 'interp "OAZO not a function")])]
+    [(IfC ifExpr thenExpr elseExpr) (match (interp ifExpr env)
+                                      [#t (interp thenExpr env)]
+                                      [#f (interp elseExpr env)]
+                                      [other (error "OAZO Not a boolean")])]
     [(? symbol? s) (lookup s env)]
     [(? PrimV? v) v] ;Pass up
     [(? CloV? v) v])) ;Pass up
@@ -158,6 +160,7 @@
 
 ;parse
 (check-equal? (parse '{if true then 1 else 2}) (IfC 'true 1 2))
+(check-equal? (parse '{let {z <- {+ 9 14}} {y <- 98} {+ z y}}) (parse '{{anon {z y} : {+ z y}} {+ 9 14} 98}))
 (check-equal? (parse "hello") "hello")
 (check-exn (regexp (regexp-quote "OAZO Malformed ExprC: 'if"))
            (lambda () (parse '(if x then y))))
@@ -180,6 +183,11 @@
 
 (check-exn (regexp (regexp-quote "lookup: name not found: 'x"))
            (lambda () (interp 'x '())))
+
+(check-equal? (interp (IfC 'true 1 0) baseEnv) 1)
+(check-equal? (interp (IfC 'false 1 0) baseEnv) 0)
+(check-exn (regexp (regexp-quote "OAZO Not a boolean"))
+           (lambda () (interp (IfC 7 1 0) baseEnv)))
 
 
 
