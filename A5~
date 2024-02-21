@@ -92,11 +92,26 @@
     [(? string? s) s]
     [(list 'let (list (? not-keyword? keys) '<- args) ... expr) (AppC (LamC (cast keys (Listof Symbol)) (parse expr))
                                                                       (map parse (cast args (Listof Sexp))))]
-    [(list 'anon (list (? not-keyword? ids) ...) ': expr) (LamC (cast ids (Listof Symbol)) (parse expr))]
+    [(list 'anon (list (? not-keyword? ids) ...) ': expr) (cond
+                                                           [(check-dups (cast ids (Listof Symbol)))
+                                                            (error "OAZO duplicate args")]
+                                                           [else  (LamC (cast ids (Listof Symbol)) (parse expr))])]
     [(list 'if ifExpr 'then thenExpr 'else elseExpr) (IfC (parse ifExpr) (parse thenExpr) (parse elseExpr))]
     [(list expr exps ...) (AppC (parse expr) (map parse exps))]
     [(? not-keyword? s) s]
     [other (error "OAZO Malformed ExprC:" s)]))
+
+;Checks a list to see if it contains duplicates
+(define (check-dups [l : (Listof Symbol)]) : Boolean
+  (match l
+    ['() #f]
+    [(cons f r) (or (check-rest r f) (check-dups r))]))
+
+;Checks a list to see if it contains a symbol
+(define (check-rest [l : (Listof Symbol)] [s : Symbol]) : Boolean
+  (match l
+    ['() #f]
+    [(cons f r) (or (equal? f s) (check-rest r s))]))
 
 
 ;---------------------------------------------------------------------------
@@ -146,13 +161,6 @@
 (define (top-interp [s : Sexp]) : String
   (serialize (list (interp (parse s) baseEnv))))
 
-
-
-;fixed AppC parsing to not use function names
-;Added PrimV and CloV passup to interp
-;Added all needed test-cases
-;Added parsing for if statements
-
 ;-------------------------------------------------------------------------
 
 
@@ -167,6 +175,8 @@
 (check-equal? (parse "hello") "hello")
 (check-exn (regexp (regexp-quote "OAZO Malformed ExprC: 'if"))
            (lambda () (parse '(if x then y))))
+(check-exn (regexp (regexp-quote "OAZO duplicate args"))
+           (lambda () (parse '(anon (x x) : 3))))
 
 ;lookup
 (check-equal? (lookup '+ baseEnv) (PrimV add))
