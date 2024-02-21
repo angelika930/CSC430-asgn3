@@ -70,7 +70,7 @@
 ;Serialized a value
 (define (serialize  [args : (Listof Value)]) : String
   (match args
-    [(list (? string? s)) s] 
+    [(list (? string? s)) (~v s)] 
     [(list (? real? r)) (~v r)]
     [(list #t) "true"]
     [(list #f) "false"]
@@ -154,11 +154,11 @@
     [(LamC params body) (CloV params body env)]
     [(AppC id Listexp)
      (match (interp id env)
-       [(CloV params body env)
+       [(CloV params body CloEnv)
         (cond
           [(equal? (length params) (length Listexp))
            (define arglist (map (lambda ([expr : ExprC]) (interp expr env)) Listexp))
-           (define env2 (extend env arglist params))
+           (define env2 (extend CloEnv arglist params))
            (interp body env2)]
           [else (error 'interp "OAZO not correct # arguments")])]
        [(PrimV func) (func (map (lambda ([expr : ExprC]) (interp expr env)) Listexp))]
@@ -177,7 +177,6 @@
   (serialize (list (interp (parse s) baseEnv))))
 
 ;-------------------------------------------------------------------------
-
 
 ;not-keyword?
 (check-equal? (not-keyword? ':) #f)
@@ -278,9 +277,11 @@
 
 (define prog4 '{{anon {five} : 5} 3})
 
+(check-equal? (top-interp '{{{anon {y} : {anon {x} : {+ x y}}} 7} 3}) "10")
+
 (check-exn (regexp (regexp-quote "OAZO Malformed ExprC"))
            (lambda () (top-interp prog3)))
-(check-exn (regexp (regexp-quote "user-error: 1234"))
+(check-exn (regexp (regexp-quote "user-error: \"1234\""))
            (lambda () (top-interp '(+ 4 (error "1234")))))
 
 
