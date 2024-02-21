@@ -58,15 +58,30 @@
     [(list (? real? op1) (? real? op2)) (<= op1 op2)]
     [other (error 'less-than "OAZO Input invalid")]))
 
+;Sees if two values are equal
+(define (OAZOeq [args : (Listof Value)]) : Boolean
+  (match args
+    [(list arg1 arg2) (cond
+                        [(or (CloV? arg1) (CloV? arg2) (PrimV? arg1) (PrimV? arg2)) #f]
+                        [else (equal? arg1 arg2)])]
+    [other (error "OAZO wrong # args")]))
+
+(check-equal? (OAZOeq '(5 4)) #f)
+(check-equal? (OAZOeq '(5 5)) #t)
+(check-equal? (OAZOeq (list (PrimV add) (PrimV add))) #f)
+(check-exn (regexp (regexp-quote "OAZO wrong # args"))
+           (lambda () (OAZOeq '(1 2 3))))
+
 ;Serialized a value
 (define (serialize  [args : (Listof Value)]) : String
   (match args
+    [(list (? string? s)) s] 
     [(list (? real? r)) (~v r)]
     [(list #t) "true"]
     [(list #f) "false"]
     [(list (? CloV? v)) "#<procedure>"]
     [(list (? PrimV? v)) "#<primop>"]
-    [other (error 'serialize "OAZO too many args")]))
+    [other (error 'serialize "OAZO wrong # args")]))
 
 ;Signals an error
 (define (err [args : (Listof Value)])
@@ -79,7 +94,8 @@
                  (Binding '* (PrimV mult))
                  (Binding '/ (PrimV div))
                  (Binding '<= (PrimV less-than))
-                 (Binding 'erorr (PrimV err))
+                 (Binding 'error (PrimV err))
+                 (Binding 'equal? (PrimV OAZOeq))
                  (Binding 'true #t)
                  (Binding 'false #f)))
 
@@ -90,12 +106,15 @@
   (match s
     [(? real? r) r]
     [(? string? s) s]
-    [(list 'let (list (? not-keyword? keys) '<- args) ... expr) (AppC (LamC (cast keys (Listof Symbol)) (parse expr))
-                                                                      (map parse (cast args (Listof Sexp))))]
-    [(list 'anon (list (? not-keyword? ids) ...) ': expr) (cond
-                                                           [(check-dups (cast ids (Listof Symbol)))
-                                                            (error "OAZO duplicate args")]
-                                                           [else  (LamC (cast ids (Listof Symbol)) (parse expr))])]
+    [(list 'let (list (? not-keyword? keys) '<- args) ... expr)
+     (cond
+       [(check-dups (cast keys (Listof Symbol))) (error "OAZO duplicate args")]
+       [else  (AppC (LamC (cast keys (Listof Symbol)) (parse expr))
+                    (map parse (cast args (Listof Sexp))))])]
+    [(list 'anon (list (? not-keyword? ids) ...) ': expr)
+     (cond
+       [(check-dups (cast ids (Listof Symbol))) (error "OAZO duplicate args")]
+       [else  (LamC (cast ids (Listof Symbol)) (parse expr))])]
     [(list 'if ifExpr 'then thenExpr 'else elseExpr) (IfC (parse ifExpr) (parse thenExpr) (parse elseExpr))]
     [(list expr exps ...) (AppC (parse expr) (map parse exps))]
     [(? not-keyword? s) s]
@@ -119,7 +138,7 @@
 ;Looksup a value in an environment
 (define (lookup [for : Symbol] [env : Env]) : Value
   (match env
-    ['() (error 'lookup "name not found: ~e" for)]
+    ['() (error 'lookup "OAZO name not found: ~e" for)]
     [(cons (Binding name val) r) (cond
                                    [(symbol=? for name) val]
                                    [else (lookup for r)])]))
@@ -154,6 +173,7 @@
                                       [#f (interp elseExpr env)]
                                       [other (error "OAZO Not a boolean")])]
     [(? symbol? s) (lookup s env)]
+    [(? string? str) str] ;Pass up
     [(? PrimV? v) v] ;Pass up
     [(? CloV? v) v])) ;Pass up
 
@@ -177,10 +197,12 @@
            (lambda () (parse '(if x then y))))
 (check-exn (regexp (regexp-quote "OAZO duplicate args"))
            (lambda () (parse '(anon (x x) : 3))))
+(check-exn (regexp (regexp-quote "OAZO duplicate args"))
+           (lambda () (parse '(let (z <- 1) (z <- 2) (+ z z)))))
 
 ;lookup
 (check-equal? (lookup '+ baseEnv) (PrimV add))
-(check-exn (regexp (regexp-quote "name not found: 'x"))
+(check-exn (regexp (regexp-quote "lookup: OAZO name not found: 'x"))
            (lambda () (lookup 'x '())))
 
 
@@ -193,8 +215,9 @@
 (check-equal? (interp 'x (list (Binding 'y 5) (Binding 'x 4))) 4) 
 
 (check-equal? (interp (add '(1 2)) '()) 3)
+(check-equal? (interp "123" '()) "123")
 
-(check-exn (regexp (regexp-quote "lookup: name not found: 'x"))
+(check-exn (regexp (regexp-quote "lookup: OAZO name not found: 'x"))
            (lambda () (interp 'x '())))
 
 (check-exn (regexp (regexp-quote "OAZO not correct # arguments"))
@@ -237,7 +260,7 @@
 (check-exn (regexp (regexp-quote "OAZO Input invalid"))
            (lambda () (less-than (list 3 4 5))))
 
-(check-exn (regexp (regexp-quote "OAZO too many args"))
+(check-exn (regexp (regexp-quote "OAZO wrong # args"))
            (lambda () (serialize (list "s" 5))))
 
 
@@ -255,6 +278,8 @@
 
 (check-exn (regexp (regexp-quote "OAZO Malformed ExprC"))
            (lambda () (top-interp prog3)))
+(check-exn (regexp (regexp-quote "user-error: 1234"))
+           (lambda () (top-interp '(+ 4 (error "1234")))))
 
 
 ;testing for multiple parameters
