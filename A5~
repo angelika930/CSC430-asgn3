@@ -66,11 +66,6 @@
                         [else (equal? arg1 arg2)])]
     [other (error "OAZO wrong # args")]))
 
-(check-equal? (OAZOeq '(5 4)) #f)
-(check-equal? (OAZOeq '(5 5)) #t)
-(check-equal? (OAZOeq (list (PrimV add) (PrimV add))) #f)
-(check-exn (regexp (regexp-quote "OAZO wrong # args"))
-           (lambda () (OAZOeq '(1 2 3))))
 
 ;Serialized a value
 (define (serialize  [args : (Listof Value)]) : String
@@ -239,6 +234,13 @@
 (check-equal? (serialize '(#f))"false")
 (check-equal? (serialize (list (CloV '() 1 '()))) "#<procedure>")
 (check-equal? (serialize (list (PrimV add))) "#<primop>")
+
+(check-equal? (OAZOeq '(5 4)) #f)
+(check-equal? (OAZOeq '(5 5)) #t)
+(check-equal? (OAZOeq (list (PrimV add) (PrimV add))) #f)
+
+(check-exn (regexp (regexp-quote "OAZO wrong # args"))
+           (lambda () (OAZOeq '(1 2 3))))
 
 (check-exn (regexp (regexp-quote "user-error: 5"))
            (lambda () (err (list  5))))
