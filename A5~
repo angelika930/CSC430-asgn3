@@ -126,9 +126,12 @@
     [(AppC id Listexp)
      (match (interp id env)
        [(CloV params body env)
-        (define arglist (map (lambda ([expr : ExprC]) (interp expr env)) Listexp))
-        (define env2 (extend env arglist params))
-        (interp body env2)]
+        (cond
+          [(equal? (length params) (length Listexp))
+           (define arglist (map (lambda ([expr : ExprC]) (interp expr env)) Listexp))
+           (define env2 (extend env arglist params))
+           (interp body env2)]
+          [else (error 'interp "OAZO not correct # arguments")])]
        [(PrimV func) (func (map (lambda ([expr : ExprC]) (interp expr env)) Listexp))]
        [other (error 'interp "OAZO not a function")])]
     [(IfC ifExpr thenExpr elseExpr) (match (interp ifExpr env)
@@ -184,12 +187,13 @@
 (check-exn (regexp (regexp-quote "lookup: name not found: 'x"))
            (lambda () (interp 'x '())))
 
+(check-exn (regexp (regexp-quote "OAZO not correct # arguments"))
+           (lambda () (interp (AppC (LamC '() 9) '(17)) baseEnv)))
+
 (check-equal? (interp (IfC 'true 1 0) baseEnv) 1)
 (check-equal? (interp (IfC 'false 1 0) baseEnv) 0)
 (check-exn (regexp (regexp-quote "OAZO Not a boolean"))
            (lambda () (interp (IfC 7 1 0) baseEnv)))
-
-
 
 ;Prim Functions
 
