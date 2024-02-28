@@ -184,7 +184,7 @@
     [(cons f r) (cons (Binding (first names) f) (extend env r (rest names)))]))
 
 
-;Interprets an AST (as an ExprC) into a real number 
+;Interprets an AST (as an ExprC) into a real number
 (define (interp [e : ExprC] [env : Env]) : Value
   (match e
     [(? real? r) r]
@@ -197,9 +197,9 @@
            (define arglist (map (lambda ([expr : ExprC]) (interp expr env)) Listexp))
            (define env2 (extend CloEnv arglist params))
            (interp body env2)]
-          [else (error 'interp "OAZO not correct # arguments ~v" id)])] 
+          [else (error 'interp "OAZO not correct # arguments")])]
        [(PrimV func) (func (map (lambda ([expr : ExprC]) (interp expr env)) Listexp))]
-       [other (error 'interp "OAZO not a function ~v" id)])]
+       [other (error 'interp "OAZO not a function")])]
     [(IfC ifExpr thenExpr elseExpr) (match (interp ifExpr env)
                                       [#t (interp thenExpr env)]
                                       [#f (interp elseExpr env)]
@@ -304,7 +304,11 @@
 ;Testing println
 (check-equal? (println (list "hello")) #t)
 (check-equal? (println (list "hello" "world")) #f)
-
+;(check-equal? (read-num '()) 3)
+;(check-exn (regexp (regexp-quote "OAZO: Wrong Number of Arguments."))
+ ;          (lambda () (read-num '("hello" "world"))))
+;(check-exn (regexp (regexp-quote "OAZO: Input is not a Real Number."))
+  ;         (lambda () (read-num '())))
 
 (check-equal? (seq '(1 4 5 3)) 3)
 (check-exn (regexp (regexp-quote "OAZO: not enough args"))
@@ -345,29 +349,4 @@
 ;Testing for zero parameters
 (check-equal? (top-interp prog4) "5")
 
-
-;Example program
-(define madlib
-  '{let
-     [combine <- {anon {x y z} : {print {++ "Dr. Clements wants to write a new program named " x ", however he wants a new function whose input is " y " and output is " z "."}}}]
-     [ask <- {anon {op1 op2} : {seq {print {++ "1." op1}} {print {++ "2." op2}} {if {equal? 1 {read-num}} then op1 else op2}}}]
-     {combine {seq {print "Pick a noun"} {ask "OAZO12" "BetterPython"}} {seq {print "Pick a type"} {ask "string" "boolean"}} {seq {print "Pick a type"} {ask "real" "closure"}}}})
-
-(top-interp madlib)
-
-;Text-generated
-
-;Pick a noun
-;1.OAZO12
-;2.BetterPython
-;>1
-;Pick a type
-;1.string
-;2.boolean
-;>2
-;Pick a type
-;1.real
-;2.closure
-;>1
-;Dr. Clements wants to write a new program named OAZO12, however he wants a new function whose input is boolean and output is real.
 
