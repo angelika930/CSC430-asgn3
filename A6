@@ -112,7 +112,7 @@
      ['() (error "OAZO: Input cannot be an empty list.")]
     [(list s ...) (define newLst (map (lambda (x) (match x
                                      [(? real? r) (~v r)]
-                                     [(? string? s) s])) s))
+                                     [(? string? str) str])) s))
                   (string-append* newLst)]))
 
 
@@ -369,5 +369,5 @@
 ;1.real
 ;2.closure
 ;>1
-;Dr. Clements wants to write a new program named OAZO12, however he wants a new function whose input is boolean and output is real.
+;Dr. Clements wants to write a new program named OAZO12, however he wants a new function whose input is boolean and output is real. 
 
