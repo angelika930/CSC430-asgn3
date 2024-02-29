@@ -126,7 +126,7 @@
                  (Binding 'equal? (PrimV OAZOeq))
                  (Binding 'true #t)
                  (Binding 'false #f)
-                 (Binding 'print (PrimV println))
+                 (Binding 'print-ln (PrimV println))
                  (Binding 'read-num (PrimV read-num))
                  (Binding 'seq (PrimV seq))
                  (Binding '++ (PrimV ++))))
@@ -349,9 +349,9 @@
 ;Example program
 (define madlib
   '{let
-     [combine <- {anon {x y z} : {print {++ "Dr. Clements wants to write a new program named " x ", however he wants a new function whose input is " y " and output is " z "."}}}]
-     [ask <- {anon {op1 op2} : {seq {print {++ "1." op1}} {print {++ "2." op2}} {if {equal? 1 {read-num}} then op1 else op2}}}]
-     {combine {seq {print "Pick a noun"} {ask "OAZO12" "BetterPython"}} {seq {print "Pick a type"} {ask "string" "boolean"}} {seq {print "Pick a type"} {ask "real" "closure"}}}})
+     [combine <- {anon {x y z} : {print-ln {++ "Dr. Clements wants to write a new program named " x ", however he wants a new function whose input is " y " and output is " z "."}}}]
+     [ask <- {anon {op1 op2} : {seq {print-ln {++ "1." op1}} {print-ln {++ "2." op2}} {if {equal? 1 {read-num}} then op1 else op2}}}]
+     {combine {seq {print-ln "Pick a noun"} {ask "OAZO12" "BetterPython"}} {seq {print-ln "Pick a type"} {ask "string" "boolean"}} {seq {print-ln "Pick a type"} {ask "real" "closure"}}}})
 
 (top-interp madlib)
 
