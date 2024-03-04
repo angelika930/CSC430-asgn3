@@ -1,0 +1,296 @@
+#lang typed/racket
+
+(require typed/rackunit)
+
+;--------------------------------------------------------------------------
+(define-type ExprC (U Value LamC AppC IfC Symbol))
+
+(define-type Env (Listof Binding))
+(define-type Value (U Real Boolean String CloV PrimV LamC))
+
+(struct Binding ([name : Symbol] [val : Value]) #:transparent)
+
+(struct AppC ([id : ExprC] [args : (Listof ExprC)]) #:transparent)
+(struct IfC ([if : ExprC] [then : ExprC] [else : ExprC]) #:transparent)
+(struct CloV ([params : (Listof Symbol)] [body : ExprC] [env : Env]) #:transparent)
+(struct PrimV ([func : ((Listof Value) -> Value)]) #:transparent)
+(struct LamC ([arg : (Listof Symbol)] [body : ExprC]) #:transparent)
+
+ 
+;---------------------------------------------------------------------------
+
+;Checks if a given argument is a keyword
+(: not-keyword? (Any -> Boolean : #:+ Symbol))
+(define (not-keyword? sym)
+  (and (symbol? sym) (not (or (eq? 'if sym) (eq? 'then sym) (eq? 'else sym) (eq? 'let sym)
+                              (eq? 'anon sym) (eq? ': sym) (eq? '<- sym)))))
+
+;---------------------------------------------------------------------------
+
+;Adds two reals
+(define (add [args : (Listof Value)]) : Real
+  (match args
+    [(list (? real? op1) (? real? op2)) (+ op1 op2)]
+    [other (error 'add "OAZO Input invalid")]))
+
+;Subtract two reals
+(define (sub [args : (Listof Value)]) : Real
+  (match args
+    [(list (? real? op1) (? real? op2)) (- op1 op2)]
+    [other (error 'sub "OAZO Input invalid")]))
+
+;Multiply two reals
+(define (mult [args : (Listof Value)]) : Real
+  (match args
+    [(list (? real? op1) (? real? op2)) (* op1 op2)]
+    [other (error 'mult "OAZO Input invalid")]))
+
+;Divide two reals
+(define (div [args : (Listof Value)]) : Real
+  (match args
+    [(list (? real? op1) 0) (error "OAZO Divisor cannot be 0")]
+    [(list (? real? op1) (? real? op2)) (/ op1 op2)]
+    [other (error 'div "OAZO Input invalid")]))
+
+;Compares two reals
+(define (less-than [args : (Listof Value)]) : Boolean
+  (match args
+    [(list (? real? op1) (? real? op2)) (<= op1 op2)]
+    [other (error 'less-than "OAZO Input invalid")]))
+
+;Sees if two values are equal
+(define (OAZOeq [args : (Listof Value)]) : Boolean
+  (match args
+    [(list arg1 arg2) (cond
+                        [(or (CloV? arg1) (CloV? arg2) (PrimV? arg1) (PrimV? arg2)) #f]
+                        [else (equal? arg1 arg2)])]
+    [other (error "OAZO wrong # args")]))
+
+
+;Serialized a value
+(define (serialize  [args : (Listof Value)]) : String
+  (match args
+    [(list (? string? s)) (~v s)] 
+    [(list (? real? r)) (~v r)]
+    [(list #t) "true"]
+    [(list #f) "false"]
+    [(list (? CloV? v)) "#<procedure>"]
+    [(list (? PrimV? v)) "#<primop>"]
+    [other (error 'serialize "OAZO wrong # args")]))
+
+;Signals an error
+(define (err [args : (Listof Value)])
+  (error 'user-error (serialize args)))
+
+
+(define baseEnv (list
+                 (Binding '+ (PrimV add))
+                 (Binding '- (PrimV sub))
+                 (Binding '* (PrimV mult))
+                 (Binding '/ (PrimV div))
+                 (Binding '<= (PrimV less-than))
+                 (Binding 'error (PrimV err))
+                 (Binding 'equal? (PrimV OAZOeq))
+                 (Binding 'true #t)
+                 (Binding 'false #f)))
+
+;---------------------------------------------------------------------------
+
+;Parses an Sexpression into an ExprC
+(define (parse [s : Sexp]) : ExprC
+  (match s
+    [(? real? r) r]
+    [(? string? s) s]
+    [(list 'let (list (? not-keyword? keys) '<- args) ... expr)
+     (cond
+       [(check-dups (cast keys (Listof Symbol))) (error "OAZO duplicate args")]
+       [else  (AppC (LamC (cast keys (Listof Symbol)) (parse expr))
+                    (map parse (cast args (Listof Sexp))))])]
+    [(list 'anon (list (? not-keyword? ids) ...) ': expr)
+     (cond
+       [(check-dups (cast ids (Listof Symbol))) (error "OAZO duplicate args")]
+       [else  (LamC (cast ids (Listof Symbol)) (parse expr))])]
+    [(list 'if ifExpr 'then thenExpr 'else elseExpr) (IfC (parse ifExpr) (parse thenExpr) (parse elseExpr))]
+    [(list expr exps ...) (AppC (parse expr) (map parse exps))]
+    [(? not-keyword? s) s]
+    [other (error "OAZO Malformed ExprC:" s)]))
+
+;Checks a list to see if it contains duplicates
+(define (check-dups [l : (Listof Symbol)]) : Boolean
+  (match l
+    ['() #f]
+    [(cons f r) (or (check-rest r f) (check-dups r))]))
+
+;Checks a list to see if it contains a symbol
+(define (check-rest [l : (Listof Symbol)] [s : Symbol]) : Boolean
+  (match l
+    ['() #f]
+    [(cons f r) (or (equal? f s) (check-rest r s))]))
+
+
+;---------------------------------------------------------------------------
+
+;Looksup a value in an environment
+(define (lookup [for : Symbol] [env : Env]) : Value
+  (match env
+    ['() (error 'lookup "OAZO name not found: ~e" for)]
+    [(cons (Binding name val) r) (cond
+                                   [(symbol=? for name) val]
+                                   [else (lookup for r)])]))
+
+;-------------------------------------------------------------------------
+
+;Extends the given environment
+(define (extend [env : Env] [values : (Listof Value)] [names : (Listof Symbol)]) : Env
+  (match values
+    ['() env]
+    [(cons f r) (cons (Binding (first names) f) (extend env r (rest names)))]))
+
+
+;Interprets an AST (as an ExprC) into a real number
+(define (interp [e : ExprC] [env : Env]) : Value
+  (match e
+    [(? real? r) r]
+    [(LamC params body) (CloV params body env)]
+    [(AppC id Listexp)
+     (match (interp id env)
+       [(CloV params body CloEnv)
+        (cond
+          [(equal? (length params) (length Listexp))
+           (define arglist (map (lambda ([expr : ExprC]) (interp expr env)) Listexp))
+           (define env2 (extend CloEnv arglist params))
+           (interp body env2)]
+          [else (error 'interp "OAZO not correct # arguments")])]
+       [(PrimV func) (func (map (lambda ([expr : ExprC]) (interp expr env)) Listexp))]
+       [other (error 'interp "OAZO not a function")])]
+    [(IfC ifExpr thenExpr elseExpr) (match (interp ifExpr env)
+                                      [#t (interp thenExpr env)]
+                                      [#f (interp elseExpr env)]
+                                      [other (error "OAZO Not a boolean")])]
+    [(? symbol? s) (lookup s env)]
+    [(? string? str) str] ;Pass up
+    [(? PrimV? v) v] ;Pass up
+    [(? CloV? v) v])) ;Pass up
+
+;Wrapper for our parser and interpretor 
+(define (top-interp [s : Sexp]) : String
+  (serialize (list (interp (parse s) baseEnv))))
+
+;-------------------------------------------------------------------------
+
+;not-keyword?
+(check-equal? (not-keyword? ':) #f)
+(check-equal? (not-keyword? '<-) #f)
+(check-equal? (not-keyword? 'abc) #t)
+
+;parse
+(check-equal? (parse '{if true then 1 else 2}) (IfC 'true 1 2))
+(check-equal? (parse '{let {z <- {+ 9 14}} {y <- 98} {+ z y}}) (parse '{{anon {z y} : {+ z y}} {+ 9 14} 98}))
+(check-equal? (parse "hello") "hello")
+(check-exn (regexp (regexp-quote "OAZO Malformed ExprC: 'if"))
+           (lambda () (parse '(if x then y))))
+(check-exn (regexp (regexp-quote "OAZO duplicate args"))
+           (lambda () (parse '(anon (x x) : 3))))
+(check-exn (regexp (regexp-quote "OAZO duplicate args"))
+           (lambda () (parse '(let (z <- 1) (z <- 2) (+ z z)))))
+
+;lookup
+(check-equal? (lookup '+ baseEnv) (PrimV add))
+(check-exn (regexp (regexp-quote "lookup: OAZO name not found: 'x"))
+           (lambda () (lookup 'x '())))
+
+
+;interp
+(check-equal? (interp (AppC (PrimV add) '(4 5)) '()) 9)
+(check-equal? (interp (AppC (CloV '(x y) 'x '()) '(4 5)) '()) 4)
+(check-exn (regexp (regexp-quote "OAZO not a function"))
+           (lambda () (interp (AppC 4 '(4)) '())))
+
+(check-equal? (interp 'x (list (Binding 'y 5) (Binding 'x 4))) 4) 
+
+(check-equal? (interp (add '(1 2)) '()) 3)
+(check-equal? (interp "123" '()) "123")
+
+(check-exn (regexp (regexp-quote "lookup: OAZO name not found: 'x"))
+           (lambda () (interp 'x '())))
+
+(check-exn (regexp (regexp-quote "OAZO not correct # arguments"))
+           (lambda () (interp (AppC (LamC '() 9) '(17)) baseEnv)))
+
+(check-equal? (interp (IfC 'true 1 0) baseEnv) 1)
+(check-equal? (interp (IfC 'false 1 0) baseEnv) 0)
+(check-exn (regexp (regexp-quote "OAZO Not a boolean"))
+           (lambda () (interp (IfC 7 1 0) baseEnv)))
+
+;Prim Functions
+
+(check-equal? (sub '(4 5)) -1)
+(check-equal? (mult '(4 5)) 20)
+(check-equal? (div '(5 5)) 1)
+(check-equal? (less-than '(3 4)) #t)
+
+(check-equal? (serialize '(#t))"true")
+(check-equal? (serialize '(#f))"false")
+(check-equal? (serialize (list (CloV '() 1 '()))) "#<procedure>")
+(check-equal? (serialize (list (PrimV add))) "#<primop>")
+
+(check-equal? (OAZOeq '(5 4)) #f)
+(check-equal? (OAZOeq '(5 5)) #t)
+(check-equal? (OAZOeq (list (PrimV add) (PrimV add))) #f)
+
+(check-exn (regexp (regexp-quote "OAZO wrong # args"))
+           (lambda () (OAZOeq '(1 2 3))))
+
+(check-exn (regexp (regexp-quote "user-error: 5"))
+           (lambda () (err (list  5))))
+
+(check-exn (regexp (regexp-quote "OAZO Input invalid"))
+           (lambda () (add (list "s" 5))))
+
+(check-exn (regexp (regexp-quote "OAZO Input invalid"))
+           (lambda () (sub (list #f 5))))
+
+(check-exn (regexp (regexp-quote "OAZO Input invalid"))
+           (lambda () (mult (list #t 5))))
+
+(check-exn (regexp (regexp-quote "OAZO Input invalid"))
+           (lambda () (div (list "7" 5))))
+(check-exn (regexp (regexp-quote "OAZO Divisor cannot be 0"))
+           (lambda () (div (list 5 0))))
+
+(check-exn (regexp (regexp-quote "OAZO Input invalid"))
+           (lambda () (less-than (list 3 4 5))))
+
+(check-exn (regexp (regexp-quote "OAZO wrong # args"))
+           (lambda () (serialize (list "s" 5))))
+
+
+;top-interp
+(define prog2 ' {
+                 {func {sqr x} : {* x x}}
+                 {func {main init} : {sqr 7}}
+                 })
+(define prog3 '{
+                {func {f x x} : x}
+                {func {main} : {f x}}
+                })
+
+(define prog4 '{{anon {five} : 5} 3})
+
+(check-equal? (top-interp '{{{anon {y} : {anon {x} : {+ x y}}} 7} 3}) "10")
+
+(check-exn (regexp (regexp-quote "OAZO Malformed ExprC"))
+           (lambda () (top-interp prog3)))
+(check-exn (regexp (regexp-quote "user-error: \"1234\""))
+           (lambda () (top-interp '(+ 4 (error "1234")))))
+
+
+;testing for multiple parameters
+(check-exn (regexp (regexp-quote "OAZO Malformed ExprC"))
+           (lambda () (top-interp prog3))) 
+
+
+
+;Testing for zero parameters
+(check-equal? (top-interp prog4) "5")
+
