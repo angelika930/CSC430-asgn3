@@ -9,9 +9,11 @@
 (define-type Value (U Real Boolean String CloV PrimV LamC))
 (define-type Store (Listof Storage))
 (struct V*S ([val : Value] [store : Store]))
+(struct Env*Sto ([env : Env] [sto : Store]))
+(struct List*Sto ([vals : (Listof Value)] [sto : Store]))
 
 (struct Storage ([location : Real] [val : Value]))
-(struct Binding ([name : Symbol] [val : Value]) #:transparent)
+(struct Binding ([name : Symbol] [location : Real]) #:transparent)
 
 (struct AppC ([id : ExprC] [args : (Listof ExprC)]) #:transparent)
 (struct IfC ([if : ExprC] [then : ExprC] [else : ExprC]) #:transparent)
@@ -19,7 +21,7 @@
 (struct PrimV ([func : ((Listof Value) -> Value)]) #:transparent)
 (struct LamC ([arg : (Listof Symbol)] [body : ExprC]) #:transparent)
 
-(define baseStore '())
+
  
 ;---------------------------------------------------------------------------
 
@@ -88,15 +90,26 @@
 
 
 (define baseEnv (list
-                 (Binding '+ (PrimV add))
-                 (Binding '- (PrimV sub))
-                 (Binding '* (PrimV mult))
-                 (Binding '/ (PrimV div))
-                 (Binding '<= (PrimV less-than))
-                 (Binding 'error (PrimV err))
-                 (Binding 'equal? (PrimV OAZOeq))
-                 (Binding 'true #t)
-                 (Binding 'false #f)))
+                 (Binding '+ 0)
+                 (Binding '- 1)
+                 (Binding '* 2)
+                 (Binding '/ 3)
+                 (Binding '<= 4)
+                 (Binding 'error 5)
+                 (Binding 'equal? 6)
+                 (Binding 'true 7)
+                 (Binding 'false 8)))
+
+(define baseStore (list
+                 (Storage 0 (PrimV add))
+                 (Storage 1 (PrimV sub))
+                 (Storage 2 (PrimV mult))
+                 (Storage 3 (PrimV div))
+                 (Storage 4 (PrimV less-than))
+                 (Storage 5 (PrimV err))
+                 (Storage 6 (PrimV OAZOeq))
+                 (Storage 7 #t)
+                 (Storage 8 #f)))
 
 ;---------------------------------------------------------------------------
 
@@ -135,7 +148,7 @@
 ;---------------------------------------------------------------------------
 
 ;Looksup a value in an environment
-(define (lookup [for : Symbol] [env : Env]) : Value
+(define (lookup [for : Symbol] [env : Env]) : Real
   (match env
     ['() (error 'lookup "OAZO name not found: ~e" for)]
     [(cons (Binding name val) r) (cond
@@ -143,7 +156,7 @@
                                    [else (lookup for r)])]))
 
 ;Look ups for a location in store
-(define (store-lookup [for : Real] [sto : Store])
+(define (store-lookup [for : Real] [sto : Store]) : Value
   (match sto
     ['() (error 'store-lookup "OAZO: location not found: ~e" for)]
     [(cons (Storage location val) r) (cond
@@ -153,34 +166,59 @@
 ;-------------------------------------------------------------------------
 
 ;Extends the given environment
-(define (extend [env : Env] [values : (Listof Value)] [names : (Listof Symbol)]) : Env
-  (match values
-    ['() env]
-    [(cons f r) (cons (Binding (first names) f) (extend env r (rest names)))]))
+(define (extend [env : Env] [sto : Store] [value : Value] [name : Symbol]) : Env*Sto
+  (define sto2 (extendStore sto value))
+  (Env*Sto (cons (Binding name (find-location sto2)) env) sto2))
 
+;Extend a list to the given enviroment
+(define (extend-list [env : Env] [sto : Store] [values : (Listof Value)] [names : (Listof Symbol)]) : Env*Sto
+  (match values
+    ['() (Env*Sto env sto)]
+    [(cons f r) (define result (extend env sto f (first names)))
+                (extend-list (Env*Sto-env result) (Env*Sto-sto result) r (rest names))]))
+
+;Extends the given store
+(define (extendStore [sto : Store] [value : Value]) : Store
+  (cons (Storage (+ (find-location sto) 1) value) sto))
+
+;find the highest memory location
+(define (find-location [sto : Store]) : Real
+  (match sto
+    [(list (Storage l v)) l]
+    [(cons f r) (max (Storage-location f) (find-location r))]))
+
+;Interprets a list of arguments
+(define (interp-list [e : (Listof ExprC)] [env : Env] [sto : Store]) : List*Sto
+  (match e
+    ['() (List*Sto '() sto)]
+    [(cons f r) (define val*sto (interp f env sto))
+                (define result (interp-list r env (V*S-store val*sto)))
+                (List*Sto (cons (V*S-val val*sto) (List*Sto-vals result)) (List*Sto-sto result))]))
 
 ;Interprets an AST (as an ExprC) into a real number
 (define (interp [e : ExprC] [env : Env] [sto : Store]) : V*S
   (match e
     [(? real? r) (V*S r sto)]
-   ; [(LamC params body) (CloV params body env)]
+    [(LamC params body) (V*S (CloV params body env) sto)]
     [(AppC id Listexp)
-     (match (interp id env sto)
+     (match (V*S-val (interp id env sto))
        [(CloV params body CloEnv)
         (cond
           [(equal? (length params) (length Listexp))
-           (define arglist (map (lambda ([expr : ExprC]) (interp expr env sto)) Listexp))
-           (define env2 (extend CloEnv arglist params))
-           (interp body env2)]
+           (define vals*store (interp-list Listexp CloEnv sto))
+           (define newEnv*Sto (extend-list env (List*Sto-sto vals*store) (List*Sto-vals vals*store) params))
+           ;(define arglist (map (lambda ([expr : ExprC]) (interp expr env sto)) Listexp))
+           ;(define e*s (extend CloEnv sto arglist params))
+           (interp body (Env*Sto-env newEnv*Sto) (Env*Sto-sto newEnv*Sto))]
           [else (error 'interp "OAZO not correct # arguments")])]
-       [(PrimV func) (func (map (lambda ([expr : ExprC]) (interp expr env sto)) Listexp))]
-      
-)]
+       [(PrimV func)
+        (define vals*store (interp-list Listexp env sto))
+        (V*S (func (List*Sto-vals vals*store)) (List*Sto-sto vals*store))])] 
     [(? PrimV? v) (V*S v sto)] ;Pass up
     [(? CloV? v) (V*S v sto)] ;Pass up
-    [(? symbol? s) (V*S (store-lookup (lookup s env) sto))]
+    [(? symbol? s) (V*S (store-lookup (lookup s env) sto) sto)]
     [(? string? str) (V*S str sto)] ;Pass up
-    [other (error "OAZO: Unimplemented")]))
+    [other (error "OAZO: Unimplemented" e)]))
     ;   [other (error 'interp "OAZO not a function")])]
   ;  [(IfC ifExpr thenExpr elseExpr) (match (interp ifExpr env)
    ;                                   [#t (interp thenExpr env)]
@@ -196,7 +234,7 @@
 
 ;-------------------------------------------------------------------------
 
-;not-keyword?
+;not-keyword? 
 (check-equal? (not-keyword? ':) #f)
 (check-equal? (not-keyword? '<-) #f)
 (check-equal? (not-keyword? 'abc) #t)
@@ -295,7 +333,7 @@
 
 (define prog4 '{{anon {five} : 5} 3})
 
-(check-equal? (top-interp '{{{anon {y} : {anon {x} : {+ x y}}} 7} 3}) "10")
+(check-equal? (top-interp '{{{anon {y} : {anon {x} : {+ x y}}} 7} 3}) "10") 
 
 (check-exn (regexp (regexp-quote "OAZO Malformed ExprC"))
            (lambda () (top-interp prog3)))
