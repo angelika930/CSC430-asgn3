@@ -7,7 +7,10 @@
 
 (define-type Env (Listof Binding))
 (define-type Value (U Real Boolean String CloV PrimV LamC))
+(define-type Store (Listof Storage))
+(struct V*S ([val : Value] [store : Store]))
 
+(struct Storage ([location : Real] [val : Value]))
 (struct Binding ([name : Symbol] [val : Value]) #:transparent)
 
 (struct AppC ([id : ExprC] [args : (Listof ExprC)]) #:transparent)
@@ -16,6 +19,7 @@
 (struct PrimV ([func : ((Listof Value) -> Value)]) #:transparent)
 (struct LamC ([arg : (Listof Symbol)] [body : ExprC]) #:transparent)
 
+(define baseStore '())
  
 ;---------------------------------------------------------------------------
 
@@ -138,6 +142,14 @@
                                    [(symbol=? for name) val]
                                    [else (lookup for r)])]))
 
+;Look ups for a location in store
+(define (store-lookup [for : Real] [sto : Store])
+  (match sto
+    ['() (error 'store-lookup "OAZO: location not found: ~e" for)]
+    [(cons (Storage location val) r) (cond
+                                       [(eq? for location) val]
+                                       [else (store-lookup for r)])]))
+
 ;-------------------------------------------------------------------------
 
 ;Extends the given environment
@@ -148,33 +160,39 @@
 
 
 ;Interprets an AST (as an ExprC) into a real number
-(define (interp [e : ExprC] [env : Env]) : Value
+(define (interp [e : ExprC] [env : Env] [sto : Store]) : V*S
   (match e
-    [(? real? r) r]
-    [(LamC params body) (CloV params body env)]
+    [(? real? r) (V*S r sto)]
+   ; [(LamC params body) (CloV params body env)]
     [(AppC id Listexp)
-     (match (interp id env)
+     (match (interp id env sto)
        [(CloV params body CloEnv)
         (cond
           [(equal? (length params) (length Listexp))
-           (define arglist (map (lambda ([expr : ExprC]) (interp expr env)) Listexp))
+           (define arglist (map (lambda ([expr : ExprC]) (interp expr env sto)) Listexp))
            (define env2 (extend CloEnv arglist params))
            (interp body env2)]
           [else (error 'interp "OAZO not correct # arguments")])]
-       [(PrimV func) (func (map (lambda ([expr : ExprC]) (interp expr env)) Listexp))]
-       [other (error 'interp "OAZO not a function")])]
-    [(IfC ifExpr thenExpr elseExpr) (match (interp ifExpr env)
-                                      [#t (interp thenExpr env)]
-                                      [#f (interp elseExpr env)]
-                                      [other (error "OAZO Not a boolean")])]
-    [(? symbol? s) (lookup s env)]
-    [(? string? str) str] ;Pass up
-    [(? PrimV? v) v] ;Pass up
-    [(? CloV? v) v])) ;Pass up
+       [(PrimV func) (func (map (lambda ([expr : ExprC]) (interp expr env sto)) Listexp))]
+      
+)]
+    [(? PrimV? v) (V*S v sto)] ;Pass up
+    [(? CloV? v) (V*S v sto)] ;Pass up
+    [(? symbol? s) (V*S (store-lookup (lookup s env) sto))]
+    [(? string? str) (V*S str sto)] ;Pass up
+    [other (error "OAZO: Unimplemented")]))
+    ;   [other (error 'interp "OAZO not a function")])]
+  ;  [(IfC ifExpr thenExpr elseExpr) (match (interp ifExpr env)
+   ;                                   [#t (interp thenExpr env)]
+    ;                                  [#f (interp elseExpr env)]
+     ;                                 [other (error "OAZO Not a boolean")])]
+    
+   
+    
 
 ;Wrapper for our parser and interpretor 
 (define (top-interp [s : Sexp]) : String
-  (serialize (list (interp (parse s) baseEnv))))
+  (serialize (list ( V*S-val (interp (parse s) baseEnv baseStore)))))
 
 ;-------------------------------------------------------------------------
 
@@ -201,26 +219,26 @@
 
 
 ;interp
-(check-equal? (interp (AppC (PrimV add) '(4 5)) '()) 9)
-(check-equal? (interp (AppC (CloV '(x y) 'x '()) '(4 5)) '()) 4)
-(check-exn (regexp (regexp-quote "OAZO not a function"))
-           (lambda () (interp (AppC 4 '(4)) '())))
+;(check-equal? (interp (AppC (PrimV add) '(4 5)) '()) 9)
+;(check-equal? (interp (AppC (CloV '(x y) 'x '()) '(4 5)) '()) 4)
+;(check-exn (regexp (regexp-quote "OAZO not a function"))
+;           (lambda () (interp (AppC 4 '(4)) '())))
 
-(check-equal? (interp 'x (list (Binding 'y 5) (Binding 'x 4))) 4) 
+;(check-equal? (interp 'x (list (Binding 'y 5) (Binding 'x 4))) 4) 
 
-(check-equal? (interp (add '(1 2)) '()) 3)
-(check-equal? (interp "123" '()) "123")
+;(check-equal? (interp (add '(1 2)) '()) 3)
+;(check-equal? (interp "123" '()) "123")
 
-(check-exn (regexp (regexp-quote "lookup: OAZO name not found: 'x"))
-           (lambda () (interp 'x '())))
+;(check-exn (regexp (regexp-quote "lookup: OAZO name not found: 'x")) 
+;           (lambda () (interp 'x '())))
 
-(check-exn (regexp (regexp-quote "OAZO not correct # arguments"))
-           (lambda () (interp (AppC (LamC '() 9) '(17)) baseEnv)))
+;(check-exn (regexp (regexp-quote "OAZO not correct # arguments"))
+ ;          (lambda () (interp (AppC (LamC '() 9) '(17)) baseEnv)))
 
-(check-equal? (interp (IfC 'true 1 0) baseEnv) 1)
-(check-equal? (interp (IfC 'false 1 0) baseEnv) 0)
-(check-exn (regexp (regexp-quote "OAZO Not a boolean"))
-           (lambda () (interp (IfC 7 1 0) baseEnv)))
+;(check-equal? (interp (IfC 'true 1 0) baseEnv) 1)
+;(check-equal? (interp (IfC 'false 1 0) baseEnv) 0)
+;(check-exn (regexp (regexp-quote "OAZO Not a boolean"))
+;           (lambda () (interp (IfC 7 1 0) baseEnv)))
 
 ;Prim Functions
 
@@ -293,4 +311,3 @@
 
 ;Testing for zero parameters
 (check-equal? (top-interp prog4) "5")
-
