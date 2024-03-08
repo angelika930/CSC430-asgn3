@@ -6,7 +6,8 @@
 (define-type ExprC (U Value LamC AppC IfC Symbol))
 
 (define-type Env (Listof Binding))
-(define-type Value (U Real Boolean String CloV PrimV LamC))
+(define-type Value (U Real Boolean String CloV PrimV LamC arrayV))
+(struct arrayV ([location : Real] [length : Real]))
 (define-type Store (Listof Storage))
 (struct V*S ([val : Value] [store : Store]) #:transparent)
 (struct Env*Sto ([env : Env] [sto : Store]) #:transparent)
@@ -14,6 +15,7 @@
 
 (struct Storage ([location : Real] [val : Value]) #:transparent)
 (struct Binding ([name : Symbol] [location : Real]) #:transparent)
+(struct Index ([index : Real] [val : Value]) #:transparent)
 
 (struct AppC ([id : ExprC] [args : (Listof ExprC)]) #:transparent)
 (struct IfC ([if : ExprC] [then : ExprC] [else : ExprC]) #:transparent)
@@ -87,6 +89,29 @@
 ;Signals an error
 (define (err [args : (Listof Value)])
   (error 'user-error (serialize args)))
+
+;Creates an array of a given size
+(define (arr [size : Integer] [val : Real]) : (Listof Real) 
+  (cond
+    [(<= size 0) (error "OAZO: Cannot make an array of size less than or equal to 0")]
+    [else
+      ((inst build-list Real) size (lambda (x) val))]))
+
+(check-equal? (arr 3 4) '(4 4 4))
+(check-exn (regexp (regexp-quote "OAZO: Cannot make an array of size less than or equal to 0"))
+           (lambda () (arr 0 3)))
+
+;Return an element of an array
+(define (aref [name : (Listof Real)] [index : Integer]) : Real
+  (cond
+    [(>= index (length name)) (error "OAZO: Index exceeds length of list")]
+    [else (list-ref name index)]))
+
+(define lst '(1 2 3 4))
+(check-equal? (aref lst 3) 4)
+(check-exn (regexp (regexp-quote "OAZO: Index exceeds length of list")) 
+           (lambda () (aref lst 4)))
+
 
 
 (define baseEnv (list
