@@ -3,7 +3,7 @@
 (require typed/rackunit)
 
 ;--------------------------------------------------------------------------
-(define-type ExprC (U Value LamC AppC IfC Symbol))
+(define-type ExprC (U Value LamC AppC IfC Symbol SeqC SubC))
 
 (define-type Env (Listof Binding))
 (define-type Value (U Real Boolean String CloV PrimV ArrayV NullV))
@@ -23,6 +23,8 @@
 (struct PrimV ([func : ((Listof Value) Store -> V*S)]) #:transparent)
 (struct ArrayV ([location : Real] [length : Real]) #:transparent)
 (struct NullV () #:transparent)
+(struct SeqC ([expr : (Listof ExprC)]) #:transparent)
+(struct SubC ([str : ExprC] [begin : ExprC] [end : ExprC]) #:transparent)
 
 
  
@@ -73,18 +75,31 @@
   (match args
     [(list (? real? arg1) (? real? arg2)) (V*S (equal? arg1 arg2) sto)]
     [other (error "OAZO wrong # args")]))
+(check-equal? (num-eq? (list 1 1) (list (Storage 0 0))) (V*S #t (list (Storage 0 0))))
+(check-exn (regexp (regexp-quote "OAZO wrong # args"))
+           (lambda () (num-eq? (list 1 2 3) (list (Storage 0 0)))))
+
 
 ;Sees if two strings are equal
 (define (str-eq? [args : (Listof Value)] [sto : Store]) : V*S
   (match args
     [(list (? string? arg1) (? string? arg2)) (V*S (equal? arg1 arg2) sto)]
     [other (error "OAZO wrong # args")]))
+(check-equal? (str-eq? (list "hello" "hello") (list (Storage 0 0))) (V*S #t (list (Storage 0 0))))
+(check-exn (regexp (regexp-quote "OAZO wrong # args"))
+           (lambda () (str-eq? (list "hello" "A" " b") (list (Storage 0 0)))))
+
+
 
 ;Sees if two arrays are equal
 (define (arr-eq? [args : (Listof Value)] [sto : Store]) : V*S
   (match args
     [(list (ArrayV loc1 len1) (ArrayV loc2 len2)) (V*S (equal? loc1 loc2) sto)]
     [other (error "OAZO wrong # args")]))
+(check-equal? (arr-eq? (list (ArrayV 12 5)  (ArrayV 12 5)) '()) (V*S #t '()))
+(check-equal? (arr-eq? (list (ArrayV 7 5)  (ArrayV 12 5)) '()) (V*S #f '()))
+(check-exn (regexp (regexp-quote "OAZO wrong # args"))
+           (lambda () (arr-eq? '() '())))
 
 
 ;Serialized a value
@@ -99,42 +114,6 @@
     [(list (? NullV? v)) "Null"]
     [(list (? ArrayV? v)) "#<array>"]
     [other (error 'serialize "OAZO wrong # args")]))
-
-;Creates an array of a given size
-
-
-
-
-
-
-;(check-equal? (arr 3 4) '(4 4 4))
-;(check-exn (regexp (regexp-quote "OAZO: Cannot make an array of size less than or equal to 0"))
- ;          (lambda () (arr 0 3)))
-
-
-;Return an element of an array
-(define (aref [values : (Listof Value)] [sto : Store]) : V*S
-  (match values
-    [(list (ArrayV loc size) (? real? r)) (V*S (store-lookup (+ loc r) sto) sto)]
-    ['() (error "OAZO: wrong # of args")]))
-
-;(define lst '(1 2 3 4))
-;(check-equal? (aref lst 3) 4)
-;(check-exn (regexp (regexp-quote "OAZO: Index exceeds length of list")) 
- ;          (lambda () (aref lst 4)))
-
-;Sets a value of an array
-(define (aset [name : (Listof Value)] [sto : Store]) : V*S
-  (match values
-    [(list (ArrayV loc size) (? real? idx) (? real? val)) (V*S (NullV) (modifyStore sto (+ loc idx) val))]
-    ['() (error "OAZO: wrong # of args")]))
-
-;Gets the length of an array
-(define (alen [name : (Listof Value)] [sto : Store]) : V*S
-   (match values
-    [(list (ArrayV loc size)) (V*S size sto)]
-    ['() (error "OAZO: wrong # of args")]))
-
 
 
 (define baseEnv (list
@@ -162,7 +141,9 @@
   (match s
     [(? real? r) r]
     [(? string? s) s]
-    [(list 'let (list (? not-keyword? keys) '<- args) ... expr)
+    [(list 'seq exps ...) (SeqC (map parse exps))]
+    [(list 'substring exp1 exp2 exp3) (SubC (parse exp1) (parse exp2) (parse exp3))]
+    [(list 'let (list (? not-keyword? keys) '<- args) ... expr) 
      (cond
        [(check-dups (cast keys (Listof Symbol))) (error "OAZO duplicate args")]
        [else  (AppC (LamC (cast keys (Listof Symbol)) (parse expr))
@@ -246,6 +227,8 @@
 (define (interp [e : ExprC] [env : Env] [sto : Store]) : V*S
   (match e
     [(? real? r) (V*S r sto)]
+    [(SeqC e) (define result (interp-list e env sto)) (V*S (last (List*Sto-vals result)) (List*Sto-sto result))]
+    [(SubC str begin end) (define result (interp str env sto)) ()]
     [(LamC params body) (V*S (CloV params body env) sto)]
     [(AppC id Listexp)
      (define newV*S (interp id env sto))
@@ -272,7 +255,8 @@
          [#f (interp elseExpr env (V*S-store newV*S))]
          [other (error "OAZO Not a boolean")])]))
 
-    
+(check-equal? (parse '(seq 1 2)) (SeqC (list 1 2)))
+(check-equal? (interp (SeqC (list 1 2)) '() '()) (V*S 2 '()))
    
     
 
@@ -295,6 +279,47 @@
     [other (error "OAZO wrong # args")]))
 
 (check-equal? (arr (list 2 3) (list (Storage 0 0))) (V*S (ArrayV 1 2)  (list (Storage 2 3) (Storage 1 3) (Storage 0 0) )))
+(check-exn (regexp (regexp-quote "OAZO wrong # args"))
+           (lambda () (arr (list 1 2 3) (list (Storage 0 0)))))
+
+;Return an element of an array
+(define (aref [values : (Listof Value)] [sto : Store]) : V*S
+  (match values
+    [(list (ArrayV loc size) (? real? r)) (V*S (store-lookup (+ loc r) sto) sto)]
+    ['() (error "OAZO: wrong # of args")]))
+
+(check-equal? (aref (list (ArrayV 1 3) 1) (list (Storage 2 10))) (V*S 10 (list (Storage 2 10))))
+(check-exn (regexp (regexp-quote "OAZO: wrong # of args"))
+           (lambda () (aref '() '())))
+
+
+;(define lst '(1 2 3 4))
+;(check-equal? (aref lst 3) 4)
+;(check-exn (regexp (regexp-quote "OAZO: Index exceeds length of list")) 
+ ;          (lambda () (aref lst 4)))
+
+;Sets a value of an array
+(define (aset [values : (Listof Value)] [sto : Store]) : V*S
+  (match values
+    [(list (ArrayV loc size) (? real? idx) (? real? val)) (V*S (NullV) (modifyStore sto (+ loc idx) val))]
+    ['() (error "OAZO: wrong # of args")]))
+
+(check-equal? (aset (list (ArrayV 1 3) 1 2) (list (Storage 2 10))) (V*S (NullV) (list (Storage 2 2) (Storage 2 10))))
+(check-exn (regexp (regexp-quote "OAZO: wrong # of args"))
+           (lambda () (aset '() '())))
+
+;Gets the length of an array
+(define (alen [values : (Listof Value)] [sto : Store]) : V*S
+   (match values
+    [(list (ArrayV loc size)) (V*S size sto)]
+    ['() (error "OAZO: wrong # of args")]))
+
+(check-equal? (alen (list (ArrayV 1 2)) (list (Storage 0 0))) (V*S  2 (list (Storage 0 0))))
+(check-exn (regexp (regexp-quote "OAZO: wrong # of args")) 
+           (lambda () (alen '() (list (Storage 0 0))))) 
+
+
+
 
 (define baseStore (list
                  (Storage 0 (PrimV add))
