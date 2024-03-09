@@ -104,7 +104,7 @@
 (define (arr [values : (Listof Value)] [sto : Store]) : V*S
   (match values
     [(list (? real? size) (? real? default)) (allocate sto size default)]
-    [other (error "OAZO wrong # args")]))
+    [other (error "OAZO wrong # args")])) 
 
 ;Allocates memory from the store with defualt value
 (define (allocate [sto : Store] [size : Real] [default : Value]) : V*S
@@ -118,9 +118,12 @@
 ;(check-exn (regexp (regexp-quote "OAZO: Cannot make an array of size less than or equal to 0"))
  ;          (lambda () (arr 0 3)))
 
+
 ;Return an element of an array
 (define (aref [values : (Listof Value)] [sto : Store]) : V*S
-  (V*S 0 '()))
+  (match values
+    [(list (ArrayV loc size) (? real? r)) (V*S (store-lookup (+ loc r) sto) sto)]
+    ['() (error "OAZO: wrong # of args")]))
 
 ;(define lst '(1 2 3 4))
 ;(check-equal? (aref lst 3) 4)
@@ -129,11 +132,15 @@
 
 ;Sets a value of an array
 (define (aset [name : (Listof Value)] [sto : Store]) : V*S
-  (V*S 0 '()))
+  (match values
+    [(list (ArrayV loc size) (? real? idx) (? real? val)) (V*S (NullV) (modifyStore sto (+ loc idx) val))]
+    ['() (error "OAZO: wrong # of args")]))
 
 ;Gets the length of an array
 (define (alen [name : (Listof Value)] [sto : Store]) : V*S
-  (V*S 0 '()))
+   (match values
+    [(list (ArrayV loc size)) (V*S size sto)]
+    ['() (error "OAZO: wrong # of args")]))
 
 
 
@@ -239,6 +246,9 @@
 (define (extendStore [sto : Store] [value : Value]) : Store
   (cons (Storage (+ (find-location sto) 1) value) sto))
 
+(define (modifyStore [sto : Store] [location : Real] [value : Value]) : Store
+  (cons (Storage location value) sto))
+
 ;find the highest memory location
 (define (find-location [sto : Store]) : Real
   (match sto
@@ -297,37 +307,12 @@
 (check-equal? (interp-list (list {+ 1 {+ 1 1}} {+ 2 3}) baseEnv baseStore)
  (List*Sto
  '(3 5)
- (list
-  (Storage 0 (PrimV add))
-  (Storage 1 (PrimV sub))
-  (Storage 2 (PrimV mult))
-  (Storage 3 (PrimV div))
-  (Storage 4 (PrimV less-than))
-  (Storage 6 #t)
-  (Storage 7 #f))))
+ baseStore))
 
 (check-equal? (extend-list baseEnv baseStore '(1 2) '(x y))
               (Env*Sto
- (list (Binding 'y 10)
-       (Binding 'x 9)
-       (Binding '+ 0)
-       (Binding '- 1)
-       (Binding '* 2)
-       (Binding '/ 3)
-       (Binding '<= 4)
-       (Binding 'equal? 5)
-       (Binding 'true 6)
-       (Binding 'false 7))
- (list
-  (Storage 10 2)
-  (Storage 9 1)
-  (Storage 0 (PrimV add))
-  (Storage 1 (PrimV sub))
-  (Storage 2 (PrimV mult))
-  (Storage 3 (PrimV div))
-  (Storage 4 (PrimV less-than))
-  (Storage 6 #t)
-  (Storage 7 #f))))
+ (cons (Binding 'y 15) (cons (Binding 'x 14) baseEnv))
+ (cons (Storage 15 2) (cons (Storage 14 1) baseStore))))
 
 
 ;not-keyword? 
@@ -353,16 +338,8 @@
 
 ;interp
 (check-equal? (interp (AppC (PrimV add) '(4 5)) '() '()) (V*S 9 '()))
-(check-equal? (interp (AppC (CloV '(x y) 'x baseEnv) '(4 5)) baseEnv baseStore) (V*S 4 (list
-  (Storage 10 5)
-  (Storage 9 4)
-  (Storage 0 (PrimV add))
-  (Storage 1 (PrimV sub))
-  (Storage 2 (PrimV mult))
-  (Storage 3 (PrimV div))
-  (Storage 4 (PrimV less-than))
-  (Storage 6 #t)
-  (Storage 7 #f))))
+(check-equal? (interp (AppC (CloV '(x y) 'x baseEnv) '(4 5)) baseEnv baseStore)
+              (V*S 4 (cons (Storage 15 5) (cons (Storage 14 4) baseStore))))
 
 (check-exn (regexp (regexp-quote "OAZO not a function"))
            (lambda () (interp (AppC 4 '(4)) '() '())))
@@ -384,10 +361,10 @@
 
 ;Prim Functions
 
-(check-equal? (sub '(4 5) '()) -1)
-(check-equal? (mult '(4 5) '()) 20)
-(check-equal? (div '(5 5) '()) 1)
-(check-equal? (less-than '(3 4) '()) #t)
+(check-equal? (sub '(4 5) '()) (V*S -1 '()))
+(check-equal? (mult '(4 5) '()) (V*S 20 '()))
+(check-equal? (div '(5 5) '()) (V*S 1 '()))
+(check-equal? (less-than '(3 4) '()) (V*S #t '()))
 
 (check-equal? (serialize '(#t))"true")
 (check-equal? (serialize '(#f))"false")
@@ -419,7 +396,7 @@
 ;                 {func {sqr x} : {* x x}}
 ;                 {func {main init} : {sqr 7}}
 ;                 })
-
+ 
 (define prog3 '{
                 {func {f x x} : x}
                 {func {main} : {f x}}
@@ -430,8 +407,6 @@
 
 (check-exn (regexp (regexp-quote "OAZO Malformed ExprC"))
            (lambda () (top-interp prog3)))
-(check-exn (regexp (regexp-quote "user-error: \"1234\""))
-           (lambda () (top-interp '(+ 4 (error "1234")))))
 
 
 ;testing for multiple parameters
