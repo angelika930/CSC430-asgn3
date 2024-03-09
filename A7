@@ -3,7 +3,7 @@
 (require typed/rackunit)
 
 ;--------------------------------------------------------------------------
-(define-type ExprC (U Value LamC AppC IfC Symbol SeqC SubC))
+(define-type ExprC (U Value LamC AppC IfC Symbol SeqC SetC))
 
 (define-type Env (Listof Binding))
 (define-type Value (U Real Boolean String CloV PrimV ArrayV NullV))
@@ -24,7 +24,7 @@
 (struct ArrayV ([location : Real] [length : Real]) #:transparent)
 (struct NullV () #:transparent)
 (struct SeqC ([expr : (Listof ExprC)]) #:transparent)
-(struct SubC ([str : ExprC] [begin : ExprC] [end : ExprC]) #:transparent)
+(struct SetC ([name : Symbol] [val : ExprC]) #:transparent)
 
 
  
@@ -33,8 +33,8 @@
 ;Checks if a given argument is a keyword
 (: not-keyword? (Any -> Boolean : #:+ Symbol))
 (define (not-keyword? sym)
-  (and (symbol? sym) (not (or (eq? 'if sym) (eq? 'then sym) (eq? 'else sym) (eq? 'let sym)
-                              (eq? 'anon sym) (eq? ': sym) (eq? '<- sym)))))
+  (and (symbol? sym) (not (or (equal? 'if sym) (equal? 'then sym) (equal? 'else sym) (equal? 'let sym)
+                              (equal? 'anon sym) (equal? ': sym) (equal? '<- sym) (equal? 'seq sym) (equal? ':= sym)))))
 
 ;---------------------------------------------------------------------------
 
@@ -96,10 +96,16 @@
   (match args
     [(list (ArrayV loc1 len1) (ArrayV loc2 len2)) (V*S (equal? loc1 loc2) sto)]
     [other (error "OAZO wrong # args")]))
+
 (check-equal? (arr-eq? (list (ArrayV 12 5)  (ArrayV 12 5)) '()) (V*S #t '()))
 (check-equal? (arr-eq? (list (ArrayV 7 5)  (ArrayV 12 5)) '()) (V*S #f '()))
 (check-exn (regexp (regexp-quote "OAZO wrong # args"))
            (lambda () (arr-eq? '() '())))
+
+(define (substr [args : (Listof Value)] [sto : Store]) : V*S
+  (match args
+    [(list (? string? str) (? natural? b) (? natural? e)) (V*S (substring str b e) sto)]
+    [other (error "OAZO wrong # args")]))
 
 
 ;Serialized a value
@@ -130,7 +136,8 @@
                  (Binding 'aset 10)
                  (Binding 'alen 11)
                  (Binding 'true 12)
-                 (Binding 'false 13)))
+                 (Binding 'false 13)
+                 (Binding 'substring 14)))
 
 
 
@@ -141,14 +148,14 @@
   (match s
     [(? real? r) r]
     [(? string? s) s]
+    [(list (? symbol? id) ':= val) (SetC id (parse val))]
     [(list 'seq exps ...) (SeqC (map parse exps))]
-    [(list 'substring exp1 exp2 exp3) (SubC (parse exp1) (parse exp2) (parse exp3))]
-    [(list 'let (list (? not-keyword? keys) '<- args) ... expr) 
+    [(list 'let (list (list (? not-keyword? keys) ':  ty )... '<- args) ... expr) 
      (cond
        [(check-dups (cast keys (Listof Symbol))) (error "OAZO duplicate args")]
        [else  (AppC (LamC (cast keys (Listof Symbol)) (parse expr))
                     (map parse (cast args (Listof Sexp))))])]
-    [(list 'anon (list (? not-keyword? ids) ...) ': expr)
+    [(list 'anon (list (list (? not-keyword? ids) ty )...) ': expr)
      (cond
        [(check-dups (cast ids (Listof Symbol))) (error "OAZO duplicate args")]
        [else  (LamC (cast ids (Listof Symbol)) (parse expr))])]
@@ -172,7 +179,7 @@
 
 ;---------------------------------------------------------------------------
 
-;Looksup a value in an environment
+;Looks up a value in an environment
 (define (lookup [for : Symbol] [env : Env] [sto : Store]) : Value
   (match env
     ['() (error 'lookup "OAZO name not found: ~e" for)]
@@ -180,7 +187,14 @@
                                    [(symbol=? for name) (store-lookup loc sto)]
                                    [else (lookup for r sto)])]))
 
-;Look ups for a location in store
+;Look up a location bound to a var
+(define (env-lookup [for : Symbol] [env : Env]) : Real
+  (match env
+    ['() (error 'lookup "OAZO name not found: ~e" for)]
+    [(cons (Binding name loc) r) (cond
+                                   [(symbol=? for name) loc]
+                                   [else (env-lookup for r)])]))
+;Looks up for a location in store
 (define (store-lookup [for : Real] [sto : Store]) : Value
   (match sto
     ['() (error 'store-lookup "OAZO: location not found: ~e" for)]
@@ -228,8 +242,9 @@
   (match e
     [(? real? r) (V*S r sto)]
     [(SeqC e) (define result (interp-list e env sto)) (V*S (last (List*Sto-vals result)) (List*Sto-sto result))]
-    [(SubC str begin end) (define result (interp str env sto)) ()]
     [(LamC params body) (V*S (CloV params body env) sto)]
+    [(SetC id val) (define result (interp val env sto))
+                   (V*S (NullV) (modifyStore (V*S-store result) (env-lookup id env) (V*S-val result)))]
     [(AppC id Listexp)
      (define newV*S (interp id env sto))
      (match (V*S-val newV*S)
@@ -239,7 +254,7 @@
            (define vals*store (interp-list Listexp env (V*S-store newV*S)))
            (define newEnv*Sto (extend-list CloEnv (List*Sto-sto vals*store) (List*Sto-vals vals*store) params))
            (interp body (Env*Sto-env newEnv*Sto) (Env*Sto-sto newEnv*Sto))]
-          [else (error 'interp "OAZO not correct # arguments")])]
+          [else (error 'interp "OAZO not correct # arguments ~v ~v" Listexp params)])]
        [(PrimV func)
         (define vals*store (interp-list Listexp env sto))
         (func (List*Sto-vals vals*store) (List*Sto-sto vals*store))]
@@ -257,12 +272,13 @@
 
 (check-equal? (parse '(seq 1 2)) (SeqC (list 1 2)))
 (check-equal? (interp (SeqC (list 1 2)) '() '()) (V*S 2 '()))
-   
+(check-equal? (interp (SetC 'x 2) (list (Binding 'x 0)) (list (Storage 0 1)))
+              (V*S (NullV) (list (Storage 0 2) (Storage 0 1))))
     
 
 ;Wrapper for our parser and interpretor 
 (define (top-interp [s : Sexp]) : String
-  (serialize (list ( V*S-val (interp (parse s) baseEnv baseStore)))))
+  (serialize (list ( V*S-val (interp (parse s) baseEnv baseStore))))) 
 
 
 ;Allocates memory from the store with defualt value
@@ -275,22 +291,28 @@
 
 (define (arr [values : (Listof Value)] [sto : Store]) : V*S
   (match values
-    [(list (? real? size) (? real? default)) (define result (allocate sto size default)) (V*S (ArrayV (+ (find-location sto) 1) size) (V*S-store result))]
+    [(list (? real? size) (? real? default)) (define result (allocate sto size default))
+                                             (V*S (ArrayV (+ (find-location sto) 1) size) (V*S-store result))]
     [other (error "OAZO wrong # args")]))
 
-(check-equal? (arr (list 2 3) (list (Storage 0 0))) (V*S (ArrayV 1 2)  (list (Storage 2 3) (Storage 1 3) (Storage 0 0) )))
+(check-equal? (arr (list 2 3) (list (Storage 0 0))) (V*S (ArrayV 1 2)
+                                                         (list (Storage 2 3) (Storage 1 3) (Storage 0 0) )))
 (check-exn (regexp (regexp-quote "OAZO wrong # args"))
            (lambda () (arr (list 1 2 3) (list (Storage 0 0)))))
 
 ;Return an element of an array
 (define (aref [values : (Listof Value)] [sto : Store]) : V*S
   (match values
-    [(list (ArrayV loc size) (? real? r)) (V*S (store-lookup (+ loc r) sto) sto)]
+    [(list (ArrayV loc size) (? real? r)) (cond
+                       [(>= r size) (error "OAZO: index out of bound")]
+                       [else (V*S (store-lookup (+ loc r) sto) sto)])]
     ['() (error "OAZO: wrong # of args")]))
 
 (check-equal? (aref (list (ArrayV 1 3) 1) (list (Storage 2 10))) (V*S 10 (list (Storage 2 10))))
 (check-exn (regexp (regexp-quote "OAZO: wrong # of args"))
            (lambda () (aref '() '())))
+(check-exn (regexp (regexp-quote "OAZO: index out of bound"))
+           (lambda () (aref (list (ArrayV 1 3) 20) (list (Storage 2 10)))))
 
 
 ;(define lst '(1 2 3 4))
@@ -301,12 +323,16 @@
 ;Sets a value of an array
 (define (aset [values : (Listof Value)] [sto : Store]) : V*S
   (match values
-    [(list (ArrayV loc size) (? real? idx) (? real? val)) (V*S (NullV) (modifyStore sto (+ loc idx) val))]
+    [(list (ArrayV loc size) (? real? idx) (? real? val)) (cond
+                                                            [(>= idx size) (error "OAZO: index out of bound")]
+                                                            [else (V*S (NullV) (modifyStore sto (+ loc idx) val))])]
     ['() (error "OAZO: wrong # of args")]))
 
 (check-equal? (aset (list (ArrayV 1 3) 1 2) (list (Storage 2 10))) (V*S (NullV) (list (Storage 2 2) (Storage 2 10))))
 (check-exn (regexp (regexp-quote "OAZO: wrong # of args"))
            (lambda () (aset '() '())))
+(check-exn (regexp (regexp-quote "OAZO: index out of bound"))
+           (lambda () (aset (list (ArrayV 1 3) 20 1) (list (Storage 2 10)))))
 
 ;Gets the length of an array
 (define (alen [values : (Listof Value)] [sto : Store]) : V*S
@@ -335,11 +361,13 @@
                  (Storage 10 (PrimV aset))
                  (Storage 11 (PrimV alen))
                  (Storage 12 #t)
-                 (Storage 13 #f)))
+                 (Storage 13 #f)
+                 (Storage 14 (PrimV substr))))
 
 ;-------------------------------------------------------------------------
 
-(check-equal? (top-interp '{{{anon {y} : {anon {x} : {+ x y}}} 7} 3}) "10") 
+(check-equal? (top-interp '{{{anon {[y num]} : {anon {[x num]} : {+ x y}}} 7} 3}) "10")
+(check-equal? (top-interp '{substring "abcdef" 1 5}) "\"bcde\"") 
 (check-equal? (interp-list (list {+ 1 {+ 1 1}} {+ 2 3}) baseEnv baseStore)
  (List*Sto
  '(3 5)
@@ -347,8 +375,8 @@
 
 (check-equal? (extend-list baseEnv baseStore '(1 2) '(x y))
               (Env*Sto
- (cons (Binding 'y 15) (cons (Binding 'x 14) baseEnv))
- (cons (Storage 15 2) (cons (Storage 14 1) baseStore))))
+ (cons (Binding 'y 16) (cons (Binding 'x 15) baseEnv))
+ (cons (Storage 16 2) (cons (Storage 15 1) baseStore))))
 
 
 ;not-keyword? 
@@ -375,12 +403,13 @@
 ;interp
 (check-equal? (interp (AppC (PrimV add) '(4 5)) '() '()) (V*S 9 '()))
 (check-equal? (interp (AppC (CloV '(x y) 'x baseEnv) '(4 5)) baseEnv baseStore)
-              (V*S 4 (cons (Storage 15 5) (cons (Storage 14 4) baseStore))))
+              (V*S 4 (cons (Storage 16 5) (cons (Storage 15 4) baseStore))))
 
 (check-exn (regexp (regexp-quote "OAZO not a function"))
            (lambda () (interp (AppC 4 '(4)) '() '())))
 
-(check-equal? (interp 'x (list (Binding 'y 2) (Binding 'x 1)) (list (Storage 2 3) (Storage 1 4))) (V*S 4 (list (Storage 2 3) (Storage 1 4)))) 
+(check-equal? (interp 'x (list (Binding 'y 2) (Binding 'x 1)) (list (Storage 2 3) (Storage 1 4)))
+              (V*S 4 (list (Storage 2 3) (Storage 1 4)))) 
 (check-equal? (interp 3 '() '()) (V*S 3 '()))
 (check-equal? (interp "123" '() '()) (V*S "123" '()))
 
@@ -434,11 +463,11 @@
 ;                 })
  
 (define prog3 '{
-                {func {f x x} : x}
-                {func {main} : {f x}}
+                {func {[f num] [x num] [x num]} : x}
+                {func {[main num]} : {f x}}
                 })
 
-(define prog4 '{{anon {five} : 5} 3})
+(define prog4 '{{anon {[five num]} : 5} 3})
 
 
 (check-exn (regexp (regexp-quote "OAZO Malformed ExprC"))
@@ -450,7 +479,7 @@
            (lambda () (top-interp prog3)))
 
 (check-exn (regexp (regexp-quote "OAZO duplicate args"))
-           (lambda () (top-interp '{{anon {x x} : {+ x x}} 2}))) 
+           (lambda () (top-interp '{{anon {[x num] [x num]} : {+ x x}} 2}))) 
 
 
 
