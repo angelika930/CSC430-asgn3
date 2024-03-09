@@ -101,18 +101,11 @@
     [other (error 'serialize "OAZO wrong # args")]))
 
 ;Creates an array of a given size
-(define (arr [values : (Listof Value)] [sto : Store]) : V*S
-  (match values
-    [(list (? real? size) (? real? default)) (allocate sto size default)]
-    [other (error "OAZO wrong # args")])) 
 
-;Allocates memory from the store with defualt value
-(define (allocate [sto : Store] [size : Real] [default : Value]) : V*S
-  (cond
-    [(> size 0) (define newStore (extendStore sto default))
-                (define retLocation (find-location newStore))
-                (V*S retLocation (V*S-store (allocate newStore (- size 1) default)))]
-    [else (V*S (find-location sto) sto)]))
+
+
+
+
 
 ;(check-equal? (arr 3 4) '(4 4 4))
 ;(check-exn (regexp (regexp-quote "OAZO: Cannot make an array of size less than or equal to 0"))
@@ -160,21 +153,7 @@
                  (Binding 'true 12)
                  (Binding 'false 13)))
 
-(define baseStore (list
-                 (Storage 0 (PrimV add))
-                 (Storage 1 (PrimV sub))
-                 (Storage 2 (PrimV mult))
-                 (Storage 3 (PrimV div))
-                 (Storage 4 (PrimV less-than))
-                 (Storage 5 (PrimV num-eq?))
-                 (Storage 6 (PrimV str-eq?))
-                 (Storage 7 (PrimV arr-eq?))
-                 (Storage 8 (PrimV arr))
-                 (Storage 9 (PrimV aref))
-                 (Storage 10 (PrimV aset))
-                 (Storage 11 (PrimV alen))
-                 (Storage 12 #t)
-                 (Storage 13 #f)))
+
 
 ;---------------------------------------------------------------------------
 
@@ -300,6 +279,38 @@
 ;Wrapper for our parser and interpretor 
 (define (top-interp [s : Sexp]) : String
   (serialize (list ( V*S-val (interp (parse s) baseEnv baseStore)))))
+
+
+;Allocates memory from the store with defualt value
+(define (allocate [sto : Store] [size : Real] [default : Value]) : V*S
+  (cond
+    [(> size 0) (define newStore (extendStore sto default))
+                (define retLocation (find-location newStore))
+                (V*S retLocation (V*S-store (allocate newStore (- size 1) default)))]
+    [else (V*S (find-location sto) sto)]))
+
+(define (arr [values : (Listof Value)] [sto : Store]) : V*S
+  (match values
+    [(list (? real? size) (? real? default)) (define result (allocate sto size default)) (V*S (ArrayV (+ (find-location sto) 1) size) (V*S-store result))]
+    [other (error "OAZO wrong # args")]))
+
+(check-equal? (arr (list 2 3) (list (Storage 0 0))) (V*S (ArrayV 1 2)  (list (Storage 2 3) (Storage 1 3) (Storage 0 0) )))
+
+(define baseStore (list
+                 (Storage 0 (PrimV add))
+                 (Storage 1 (PrimV sub))
+                 (Storage 2 (PrimV mult))
+                 (Storage 3 (PrimV div))
+                 (Storage 4 (PrimV less-than))
+                 (Storage 5 (PrimV num-eq?))
+                 (Storage 6 (PrimV str-eq?))
+                 (Storage 7 (PrimV arr-eq?))
+                 (Storage 8 (PrimV arr))
+                 (Storage 9 (PrimV aref))
+                 (Storage 10 (PrimV aset))
+                 (Storage 11 (PrimV alen))
+                 (Storage 12 #t)
+                 (Storage 13 #f)))
 
 ;-------------------------------------------------------------------------
 
