@@ -6,7 +6,9 @@
 (define-type ExprC (U Value LamC AppC IfC Symbol SeqC SetC))
 
 (define-type Env (Listof Binding))
+(define-type TEnv (Listof TBinding))
 (define-type Value (U Real Boolean String CloV PrimV ArrayV NullV))
+(define-type Ty (U NumT BoolT StrT NullT ArrayT FuncT))
 (define-type Store (Listof Storage))
 (struct V*S ([val : Value] [store : Store]) #:transparent)
 (struct Env*Sto ([env : Env] [sto : Store]) #:transparent)
@@ -14,20 +16,28 @@
 
 (struct Storage ([location : Real] [val : Value]) #:transparent)
 (struct Binding ([name : Symbol] [location : Real]) #:transparent)
+(struct TBinding ([name : Symbol] [type : Ty]) #:transparent)
 (struct Index ([index : Real] [val : Value]) #:transparent)
 
 (struct AppC ([id : ExprC] [args : (Listof ExprC)]) #:transparent)
 (struct IfC ([if : ExprC] [then : ExprC] [else : ExprC]) #:transparent)
-(struct LamC ([arg : (Listof Symbol)] [body : ExprC]) #:transparent)
+(struct LamC ([arg : (Listof Symbol)] [body : ExprC] [argT : (Listof Ty)]) #:transparent)
+(struct SeqC ([expr : (Listof ExprC)]) #:transparent)
+(struct SetC ([name : Symbol] [val : ExprC]) #:transparent)
+
 (struct CloV ([params : (Listof Symbol)] [body : ExprC] [env : Env]) #:transparent)
 (struct PrimV ([func : ((Listof Value) Store -> V*S)]) #:transparent)
 (struct ArrayV ([location : Real] [length : Real]) #:transparent)
 (struct NullV () #:transparent)
-(struct SeqC ([expr : (Listof ExprC)]) #:transparent)
-(struct SetC ([name : Symbol] [val : ExprC]) #:transparent)
+
+(struct NumT () #:transparent)
+(struct BoolT () #:transparent)
+(struct StrT () #:transparent)
+(struct ArrayT () #:transparent)
+(struct NullT () #:transparent)
+(struct FuncT ([paramT : (Listof Ty)] [return : Ty]) #:transparent)
 
 
- 
 ;---------------------------------------------------------------------------
 
 ;Checks if a given argument is a keyword
@@ -107,6 +117,8 @@
     [(list (? string? str) (? natural? b) (? natural? e)) (V*S (substring str b e) sto)]
     [other (error "OAZO wrong # args")]))
 
+(check-exn (regexp (regexp-quote "OAZO wrong # args"))
+           (lambda () (substr '() '())))
 
 ;Serialized a value
 (define (serialize  [args : (Listof Value)]) : String
@@ -120,6 +132,10 @@
     [(list (? NullV? v)) "Null"]
     [(list (? ArrayV? v)) "#<array>"]
     [other (error 'serialize "OAZO wrong # args")]))
+
+(check-equal? (serialize (list "hello")) "\"hello\"")
+(check-equal? (serialize (list (ArrayV 2 2))) "#<array>")
+(check-equal? (serialize (list (NullV))) "Null")
 
 
 (define baseEnv (list
@@ -139,30 +155,26 @@
                  (Binding 'false 13)
                  (Binding 'substring 14)))
 
+(define base-tenv (list
+                 (TBinding '+ (FuncT (list (NumT) (NumT)) (NumT)))
+                 (TBinding '- (FuncT (list (NumT) (NumT)) (NumT)))
+                 (TBinding '* (FuncT (list (NumT) (NumT)) (NumT)))
+                 (TBinding '/ (FuncT (list (NumT) (NumT)) (NumT)))
+                 (TBinding '<= (FuncT (list (NumT) (NumT)) (BoolT)))
+                 (TBinding 'num-eq? (FuncT (list (NumT) (NumT)) (BoolT)))
+                 (TBinding 'str-eq? (FuncT (list (StrT) (StrT)) (BoolT)))
+                 (TBinding 'arr-eq? (FuncT (list (ArrayT) (ArrayT)) (BoolT)))
+                 (TBinding 'arr (FuncT (list (NumT) (NumT)) (ArrayT)))
+                 (TBinding 'aref (FuncT (list (ArrayT) (NumT)) (NumT)))
+                 (TBinding 'aset (FuncT (list (ArrayT) (NumT) (NumT)) (NullT)))
+                 (TBinding 'alen (FuncT (list (ArrayT)) (NumT)))
+                 (TBinding 'true (BoolT))
+                 (TBinding 'false (BoolT))
+                 (TBinding 'substring (FuncT (list (StrT) (NumT) (NumT)) (StrT)))))
+
 
 
 ;---------------------------------------------------------------------------
-
-;Parses an Sexpression into an ExprC
-(define (parse [s : Sexp]) : ExprC
-  (match s
-    [(? real? r) r]
-    [(? string? s) s]
-    [(list (? symbol? id) ':= val) (SetC id (parse val))]
-    [(list 'seq exps ...) (SeqC (map parse exps))]
-    [(list 'let (list (list (? not-keyword? keys) ':  ty )... '<- args) ... expr) 
-     (cond
-       [(check-dups (cast keys (Listof Symbol))) (error "OAZO duplicate args")]
-       [else  (AppC (LamC (cast keys (Listof Symbol)) (parse expr))
-                    (map parse (cast args (Listof Sexp))))])]
-    [(list 'anon (list (list (? not-keyword? ids) ty )...) ': expr)
-     (cond
-       [(check-dups (cast ids (Listof Symbol))) (error "OAZO duplicate args")]
-       [else  (LamC (cast ids (Listof Symbol)) (parse expr))])]
-    [(list 'if ifExpr 'then thenExpr 'else elseExpr) (IfC (parse ifExpr) (parse thenExpr) (parse elseExpr))]
-    [(list expr exps ...) (AppC (parse expr) (map parse exps))]
-    [(? not-keyword? s) s]
-    [other (error "OAZO Malformed ExprC:" s)]))
 
 ;Checks a list to see if it contains duplicates
 (define (check-dups [l : (Listof Symbol)]) : Boolean
@@ -176,6 +188,117 @@
     ['() #f]
     [(cons f r) (or (equal? f s) (check-rest r s))]))
 
+;Parses an Sexpression into an ExprC
+(define (parse [s : Sexp]) : ExprC
+  (match s
+    [(? real? r) r]
+    [(? string? s) s]
+    [(list (? symbol? id) ':= val) (SetC id (parse val))]
+    [(list 'seq exps ...) (SeqC (map parse exps))]
+    [(list 'let (list (list (? not-keyword? keys) ':  ty ) '<- args) ... expr)
+     (cond
+       [(check-dups (cast keys (Listof Symbol))) (error "OAZO duplicate args")]
+       [else  (AppC (LamC (cast keys (Listof Symbol)) (parse expr) (map parseType (cast ty (Listof Sexp))))
+                    (map parse (cast args (Listof Sexp))))])]
+    [(list 'anon (list (list ty (? not-keyword? ids) )...) ': expr)
+     (cond
+       [(check-dups (cast ids (Listof Symbol))) (error "OAZO duplicate args")]
+       [else  (LamC (cast ids (Listof Symbol)) (parse expr) (map parseType (cast ty (Listof Sexp))))])]
+    [(list 'if ifExpr 'then thenExpr 'else elseExpr) (IfC (parse ifExpr) (parse thenExpr) (parse elseExpr))]
+    [(list expr exps ...) (AppC (parse expr) (map parse exps))]
+    [(? not-keyword? s) s]
+    [other (error "OAZO Malformed ExprC:" s)]))
+
+
+
+(define (parseType [s : Sexp]) : Ty
+  (match s
+    ['num (NumT)]
+    ['bool (BoolT)]
+    ['str (StrT)]
+    ['void (NullT)]
+    ['numarray (ArrayT)]
+    [(list args ... '-> ret) (FuncT (map parseType (cast args (Listof Sexp))) (parseType ret))]
+    [other (error "OAZO Not a Type ~e" s)]))
+
+(check-equal? (parse '{anon {[num x] [(num bool str numarray void -> num) y]} : {1}})
+              (LamC '(x y) (AppC 1 '()) (list (NumT) (FuncT (list (NumT) (BoolT)
+                                                                  (StrT) (ArrayT) (NullT)) (NumT)))))
+(check-exn (regexp (regexp-quote "OAZO Not a Type"))
+           (lambda () (parseType '7)))
+
+;Extends the given store
+(define (extend-types [env : TEnv] [values : (Listof Ty)] [names : (Listof Symbol)]) : TEnv
+  (match values
+    ['() env]
+    [(cons f r) (cons (TBinding (first names) f) (extend-types env r (rest names)))]))
+
+(define (tenv-lookup [for : Symbol] [env : TEnv]) : Ty
+  (match env
+    ['() (error 'lookup "OAZO name not found: ~e" for)]
+    [(cons (TBinding name loc) r) (cond
+                                   [(symbol=? for name) loc]
+                                   [else (tenv-lookup for r)])]))
+
+(define (type-check [e : ExprC] [env : TEnv]) : Ty
+  (match e
+    [(? real? r) (NumT)]
+    [(SeqC e) (last (map (lambda ([ex : ExprC]) (type-check ex env)) e))]
+    [(LamC params body ty) (FuncT ty (type-check body (extend-types env ty params)))]
+    [(SetC id val) (cond
+                     [(equal? (tenv-lookup id env) (type-check val env)) (NullT)]
+                     [(error "OAZO invalid set")])]
+    [(AppC id Listexp)
+          (define result (type-check id env))
+          (match result
+          [(FuncT args ret) (cond
+               [(equal? args (map (lambda ([ex : ExprC]) (type-check ex env)) Listexp)) ret]
+               [else (error "OAZO types don't match" args Listexp)])]
+           [other (error "OAZO not a function" id result)])]
+    [(IfC ifExpr thenExpr elseExpr) (cond
+                                      [(and (equal? (type-check ifExpr env) (BoolT))
+                                            (equal? (type-check thenExpr env) (type-check elseExpr env)))
+                                       (type-check thenExpr env)]
+                                      [else (error "OAZO wrong types" ifExpr thenExpr elseExpr)])]
+    [(? symbol? s) (tenv-lookup s env)]
+    [(? string? str) (StrT)]))
+
+(check-equal? (type-check (parse '(if true then 4 else 12)) base-tenv) (NumT))
+
+(check-exn (regexp (regexp-quote "OAZO invalid set"))
+           (lambda () (type-check (parse '(anon ((num x)) : (x := "str"))) base-tenv)))
+
+(check-exn (regexp (regexp-quote "OAZO wrong types"))
+           (lambda () (type-check (parse '(if true then 4 else "12")) base-tenv)))
+
+(check-exn (regexp (regexp-quote "OAZO name not found"))
+           (lambda () (type-check (parse '(anon ((num x)) : (y := 1234))) base-tenv)))
+
+(check-exn (regexp (regexp-quote "OAZO types don't match"))
+           (lambda () (type-check (parse '(+ 4 "abc")) base-tenv)))
+
+(check-exn (regexp (regexp-quote "OAZO name not found"))
+           (lambda () (type-check (parse '(^ 4 "abc")) base-tenv)))
+
+
+(check-exn (regexp (regexp-quote "OAZO not a function"))
+           (lambda () (type-check (parse '(4 4)) base-tenv)))
+
+(check-equal? (type-check (parse '{seq "hello" 8 "hello"}) '()) (StrT))
+(check-equal? (type-check (parse '(anon ((num x)) : (x := 1234))) base-tenv) (FuncT (list (NumT)) (NullT)))
+(check-equal? (type-check (parse '{anon {[num x] [str y]} : y}) '()) (FuncT (list (NumT) (StrT)) (StrT)))
+(check-equal? (type-check (parse '{{anon {[num x] [str y]} : y} 1 "hi"}) '()) (StrT))
+
+(check-equal? (type-check 1 '()) (NumT))
+
+(check-equal? (check-rest '(a b c d) 'd) #t)
+
+(check-equal? (parse (list 'x ':= 3)) (SetC 'x 3))
+;(check-equal? (parse (list 'if 3 'then 4 'else 5)) (IfC 3 4 5))
+
+(check-equal? (parse '{let {[z : num] <- 1}{+ z 4}}) (AppC (LamC '(z) (AppC '+ '(z 4)) (list (NumT))) '(1)))
+(check-exn (regexp (regexp-quote "OAZO duplicate args"))
+           (lambda () (parse '{let [[x : num] <- {1}] [[x : num] <- {2}] {1}})))
 
 ;---------------------------------------------------------------------------
 
@@ -194,13 +317,20 @@
     [(cons (Binding name loc) r) (cond
                                    [(symbol=? for name) loc]
                                    [else (env-lookup for r)])]))
+
+(check-exn (regexp (regexp-quote "OAZO name not found: 'x"))
+           (lambda () (env-lookup 'x (list (Binding 'y 0) (Binding 'z 1)))))
+
 ;Looks up for a location in store
 (define (store-lookup [for : Real] [sto : Store]) : Value
   (match sto
-    ['() (error 'store-lookup "OAZO: location not found: ~e" for)]
+    ['() (error 'store-lookup "OAZO: location not found ~e" for)]
     [(cons (Storage location val) r) (cond
                                        [(eq? for location) val]
                                        [else (store-lookup for r)])]))
+
+(check-exn (regexp (regexp-quote "OAZO: location not found 2"))
+           (lambda () (store-lookup 2 (list (Storage 0 0) (Storage 1 1)))))
 
 ;-------------------------------------------------------------------------
 
@@ -242,7 +372,7 @@
   (match e
     [(? real? r) (V*S r sto)]
     [(SeqC e) (define result (interp-list e env sto)) (V*S (last (List*Sto-vals result)) (List*Sto-sto result))]
-    [(LamC params body) (V*S (CloV params body env) sto)]
+    [(LamC params body ty) (V*S (CloV params body env) sto)]
     [(SetC id val) (define result (interp val env sto))
                    (V*S (NullV) (modifyStore (V*S-store result) (env-lookup id env) (V*S-val result)))]
     [(AppC id Listexp)
@@ -366,7 +496,7 @@
 
 ;-------------------------------------------------------------------------
 
-(check-equal? (top-interp '{{{anon {[y num]} : {anon {[x num]} : {+ x y}}} 7} 3}) "10")
+(check-equal? (top-interp '{{{anon {[num y]} : {anon {[num x]} : {+ x y}}} 7} 3}) "10")
 (check-equal? (top-interp '{substring "abcdef" 1 5}) "\"bcde\"") 
 (check-equal? (interp-list (list {+ 1 {+ 1 1}} {+ 2 3}) baseEnv baseStore)
  (List*Sto
@@ -417,7 +547,7 @@
            (lambda () (interp 'x '() '())))
 
 (check-exn (regexp (regexp-quote "OAZO not correct # arguments"))
-           (lambda () (interp (AppC (LamC '() 9) '(17)) baseEnv baseStore)))
+           (lambda () (interp (AppC (LamC '() 9 '()) '(17)) baseEnv baseStore)))
 
 (check-equal? (interp (IfC 'true 1 0) baseEnv baseStore) (V*S 1 baseStore))
 (check-equal? (interp (IfC 'false 1 0) baseEnv baseStore) (V*S 0 baseStore))
@@ -463,11 +593,11 @@
 ;                 })
  
 (define prog3 '{
-                {func {[f num] [x num] [x num]} : x}
-                {func {[main num]} : {f x}}
+                {func {[num f] [num x] [num x]} : x}
+                {func {[num main ]} : {f x}}
                 })
 
-(define prog4 '{{anon {[five num]} : 5} 3})
+(define prog4 '{{anon {[num five]} : 5} 3})
 
 
 (check-exn (regexp (regexp-quote "OAZO Malformed ExprC"))
@@ -479,7 +609,7 @@
            (lambda () (top-interp prog3)))
 
 (check-exn (regexp (regexp-quote "OAZO duplicate args"))
-           (lambda () (top-interp '{{anon {[x num] [x num]} : {+ x x}} 2}))) 
+           (lambda () (top-interp '{{anon {[num x] [num x]} : {+ x x}} 2}))) 
 
 
 
