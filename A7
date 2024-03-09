@@ -6,8 +6,7 @@
 (define-type ExprC (U Value LamC AppC IfC Symbol))
 
 (define-type Env (Listof Binding))
-(define-type Value (U Real Boolean String CloV PrimV LamC arrayV))
-(struct arrayV ([location : Real] [length : Real]))
+(define-type Value (U Real Boolean String CloV PrimV ArrayV NullV))
 (define-type Store (Listof Storage))
 (struct V*S ([val : Value] [store : Store]) #:transparent)
 (struct Env*Sto ([env : Env] [sto : Store]) #:transparent)
@@ -19,9 +18,11 @@
 
 (struct AppC ([id : ExprC] [args : (Listof ExprC)]) #:transparent)
 (struct IfC ([if : ExprC] [then : ExprC] [else : ExprC]) #:transparent)
-(struct CloV ([params : (Listof Symbol)] [body : ExprC] [env : Env]) #:transparent)
-(struct PrimV ([func : ((Listof Value) -> Value)]) #:transparent)
 (struct LamC ([arg : (Listof Symbol)] [body : ExprC]) #:transparent)
+(struct CloV ([params : (Listof Symbol)] [body : ExprC] [env : Env]) #:transparent)
+(struct PrimV ([func : ((Listof Value) Store -> V*S)]) #:transparent)
+(struct ArrayV ([location : Real] [length : Real]) #:transparent)
+(struct NullV () #:transparent)
 
 
  
@@ -36,42 +37,53 @@
 ;---------------------------------------------------------------------------
 
 ;Adds two reals
-(define (add [args : (Listof Value)]) : Real
+(define (add [args : (Listof Value)] [sto : Store]) : V*S
   (match args
-    [(list (? real? op1) (? real? op2)) (+ op1 op2)]
+    [(list (? real? op1) (? real? op2)) (V*S (+ op1 op2) sto)]
     [other (error 'add "OAZO Input invalid")]))
 
 ;Subtract two reals
-(define (sub [args : (Listof Value)]) : Real
+(define (sub [args : (Listof Value)] [sto : Store]) : V*S
   (match args
-    [(list (? real? op1) (? real? op2)) (- op1 op2)]
+    [(list (? real? op1) (? real? op2)) (V*S (- op1 op2) sto)]
     [other (error 'sub "OAZO Input invalid")]))
 
 ;Multiply two reals
-(define (mult [args : (Listof Value)]) : Real
+(define (mult [args : (Listof Value)] [sto : Store]) : V*S
   (match args
-    [(list (? real? op1) (? real? op2)) (* op1 op2)]
+    [(list (? real? op1) (? real? op2)) (V*S (* op1 op2) sto)]
     [other (error 'mult "OAZO Input invalid")]))
 
 ;Divide two reals
-(define (div [args : (Listof Value)]) : Real
+(define (div [args : (Listof Value)] [sto : Store]) : V*S
   (match args
     [(list (? real? op1) 0) (error "OAZO Divisor cannot be 0")]
-    [(list (? real? op1) (? real? op2)) (/ op1 op2)]
+    [(list (? real? op1) (? real? op2)) (V*S (/ op1 op2) sto)]
     [other (error 'div "OAZO Input invalid")]))
 
 ;Compares two reals
-(define (less-than [args : (Listof Value)]) : Boolean
+(define (less-than [args : (Listof Value)] [sto : Store]) : V*S
   (match args
-    [(list (? real? op1) (? real? op2)) (<= op1 op2)]
+    [(list (? real? op1) (? real? op2)) (V*S (<= op1 op2) sto)]
     [other (error 'less-than "OAZO Input invalid")]))
 
-;Sees if two values are equal
-(define (OAZOeq [args : (Listof Value)]) : Boolean
+
+;Sees if two nums are equal
+(define (num-eq? [args : (Listof Value)] [sto : Store]) : V*S
   (match args
-    [(list arg1 arg2) (cond
-                        [(or (CloV? arg1) (CloV? arg2) (PrimV? arg1) (PrimV? arg2)) #f]
-                        [else (equal? arg1 arg2)])]
+    [(list (? real? arg1) (? real? arg2)) (V*S (equal? arg1 arg2) sto)]
+    [other (error "OAZO wrong # args")]))
+
+;Sees if two strings are equal
+(define (str-eq? [args : (Listof Value)] [sto : Store]) : V*S
+  (match args
+    [(list (? string? arg1) (? string? arg2)) (V*S (equal? arg1 arg2) sto)]
+    [other (error "OAZO wrong # args")]))
+
+;Sees if two arrays are equal
+(define (arr-eq? [args : (Listof Value)] [sto : Store]) : V*S
+  (match args
+    [(list (ArrayV loc1 len1) (ArrayV loc2 len2)) (V*S (equal? loc1 loc2) sto)]
     [other (error "OAZO wrong # args")]))
 
 
@@ -84,33 +96,44 @@
     [(list #f) "false"]
     [(list (? CloV? v)) "#<procedure>"]
     [(list (? PrimV? v)) "#<primop>"]
+    [(list (? NullV? v)) "Null"]
+    [(list (? ArrayV? v)) "#<array>"]
     [other (error 'serialize "OAZO wrong # args")]))
 
-;Signals an error
-(define (err [args : (Listof Value)])
-  (error 'user-error (serialize args)))
-
 ;Creates an array of a given size
-(define (arr [size : Integer] [val : Real]) : (Listof Real) 
-  (cond
-    [(<= size 0) (error "OAZO: Cannot make an array of size less than or equal to 0")]
-    [else
-      ((inst build-list Real) size (lambda (x) val))]))
+(define (arr [values : (Listof Value)] [sto : Store]) : V*S
+  (match values
+    [(list (? real? size) (? real? default)) (allocate sto size default)]
+    [other (error "OAZO wrong # args")]))
 
-(check-equal? (arr 3 4) '(4 4 4))
-(check-exn (regexp (regexp-quote "OAZO: Cannot make an array of size less than or equal to 0"))
-           (lambda () (arr 0 3)))
+;Allocates memory from the store with defualt value
+(define (allocate [sto : Store] [size : Real] [default : Value]) : V*S
+  (cond
+    [(> size 0) (define newStore (extendStore sto default))
+                (define retLocation (find-location newStore))
+                (V*S retLocation (V*S-store (allocate newStore (- size 1) default)))]
+    [else (V*S (find-location sto) sto)]))
+
+;(check-equal? (arr 3 4) '(4 4 4))
+;(check-exn (regexp (regexp-quote "OAZO: Cannot make an array of size less than or equal to 0"))
+ ;          (lambda () (arr 0 3)))
 
 ;Return an element of an array
-(define (aref [name : (Listof Real)] [index : Integer]) : Real
-  (cond
-    [(>= index (length name)) (error "OAZO: Index exceeds length of list")]
-    [else (list-ref name index)]))
+(define (aref [values : (Listof Value)] [sto : Store]) : V*S
+  (V*S 0 '()))
 
-(define lst '(1 2 3 4))
-(check-equal? (aref lst 3) 4)
-(check-exn (regexp (regexp-quote "OAZO: Index exceeds length of list")) 
-           (lambda () (aref lst 4)))
+;(define lst '(1 2 3 4))
+;(check-equal? (aref lst 3) 4)
+;(check-exn (regexp (regexp-quote "OAZO: Index exceeds length of list")) 
+ ;          (lambda () (aref lst 4)))
+
+;Sets a value of an array
+(define (aset [name : (Listof Value)] [sto : Store]) : V*S
+  (V*S 0 '()))
+
+;Gets the length of an array
+(define (alen [name : (Listof Value)] [sto : Store]) : V*S
+  (V*S 0 '()))
 
 
 
@@ -120,10 +143,15 @@
                  (Binding '* 2)
                  (Binding '/ 3)
                  (Binding '<= 4)
-                 (Binding 'error 5)
-                 (Binding 'equal? 6)
-                 (Binding 'true 7)
-                 (Binding 'false 8)))
+                 (Binding 'num-eq? 5)
+                 (Binding 'str-eq? 6)
+                 (Binding 'arr-eq? 7)
+                 (Binding 'arr 8)
+                 (Binding 'aref 9)
+                 (Binding 'aset 10)
+                 (Binding 'alen 11)
+                 (Binding 'true 12)
+                 (Binding 'false 13)))
 
 (define baseStore (list
                  (Storage 0 (PrimV add))
@@ -131,10 +159,15 @@
                  (Storage 2 (PrimV mult))
                  (Storage 3 (PrimV div))
                  (Storage 4 (PrimV less-than))
-                 (Storage 5 (PrimV err))
-                 (Storage 6 (PrimV OAZOeq))
-                 (Storage 7 #t)
-                 (Storage 8 #f)))
+                 (Storage 5 (PrimV num-eq?))
+                 (Storage 6 (PrimV str-eq?))
+                 (Storage 7 (PrimV arr-eq?))
+                 (Storage 8 (PrimV arr))
+                 (Storage 9 (PrimV aref))
+                 (Storage 10 (PrimV aset))
+                 (Storage 11 (PrimV alen))
+                 (Storage 12 #t)
+                 (Storage 13 #f)))
 
 ;---------------------------------------------------------------------------
 
@@ -237,7 +270,7 @@
           [else (error 'interp "OAZO not correct # arguments")])]
        [(PrimV func)
         (define vals*store (interp-list Listexp env sto))
-        (V*S (func (List*Sto-vals vals*store)) (List*Sto-sto vals*store))]
+        (func (List*Sto-vals vals*store) (List*Sto-sto vals*store))]
        [other (error 'interp "OAZO not a function")])] 
     [(? PrimV? v) (V*S v sto)] ;Pass up
     [(? CloV? v) (V*S v sto)] ;Pass up
@@ -270,10 +303,8 @@
   (Storage 2 (PrimV mult))
   (Storage 3 (PrimV div))
   (Storage 4 (PrimV less-than))
-  (Storage 5 (PrimV err))
-  (Storage 6 (PrimV OAZOeq))
-  (Storage 7 #t)
-  (Storage 8 #f))))
+  (Storage 6 #t)
+  (Storage 7 #f))))
 
 (check-equal? (extend-list baseEnv baseStore '(1 2) '(x y))
               (Env*Sto
@@ -284,10 +315,9 @@
        (Binding '* 2)
        (Binding '/ 3)
        (Binding '<= 4)
-       (Binding 'error 5)
-       (Binding 'equal? 6)
-       (Binding 'true 7)
-       (Binding 'false 8))
+       (Binding 'equal? 5)
+       (Binding 'true 6)
+       (Binding 'false 7))
  (list
   (Storage 10 2)
   (Storage 9 1)
@@ -296,10 +326,8 @@
   (Storage 2 (PrimV mult))
   (Storage 3 (PrimV div))
   (Storage 4 (PrimV less-than))
-  (Storage 5 (PrimV err))
-  (Storage 6 (PrimV OAZOeq))
-  (Storage 7 #t)
-  (Storage 8 #f))))
+  (Storage 6 #t)
+  (Storage 7 #f))))
 
 
 ;not-keyword? 
@@ -333,17 +361,14 @@
   (Storage 2 (PrimV mult))
   (Storage 3 (PrimV div))
   (Storage 4 (PrimV less-than))
-  (Storage 5 (PrimV err))
-  (Storage 6 (PrimV OAZOeq))
-  (Storage 7 #t)
-  (Storage 8 #f))))
+  (Storage 6 #t)
+  (Storage 7 #f))))
 
 (check-exn (regexp (regexp-quote "OAZO not a function"))
            (lambda () (interp (AppC 4 '(4)) '() '())))
 
 (check-equal? (interp 'x (list (Binding 'y 2) (Binding 'x 1)) (list (Storage 2 3) (Storage 1 4))) (V*S 4 (list (Storage 2 3) (Storage 1 4)))) 
-
-(check-equal? (interp (add '(1 2)) '() '()) (V*S 3 '()))
+(check-equal? (interp 3 '() '()) (V*S 3 '()))
 (check-equal? (interp "123" '() '()) (V*S "123" '()))
 
 (check-exn (regexp (regexp-quote "lookup: OAZO name not found: 'x")) 
@@ -359,42 +384,32 @@
 
 ;Prim Functions
 
-(check-equal? (sub '(4 5)) -1)
-(check-equal? (mult '(4 5)) 20)
-(check-equal? (div '(5 5)) 1)
-(check-equal? (less-than '(3 4)) #t)
+(check-equal? (sub '(4 5) '()) -1)
+(check-equal? (mult '(4 5) '()) 20)
+(check-equal? (div '(5 5) '()) 1)
+(check-equal? (less-than '(3 4) '()) #t)
 
 (check-equal? (serialize '(#t))"true")
 (check-equal? (serialize '(#f))"false")
 (check-equal? (serialize (list (CloV '() 1 '()))) "#<procedure>")
 (check-equal? (serialize (list (PrimV add))) "#<primop>")
 
-(check-equal? (OAZOeq '(5 4)) #f)
-(check-equal? (OAZOeq '(5 5)) #t)
-(check-equal? (OAZOeq (list (PrimV add) (PrimV add))) #f)
-
-(check-exn (regexp (regexp-quote "OAZO wrong # args"))
-           (lambda () (OAZOeq '(1 2 3))))
-
-(check-exn (regexp (regexp-quote "user-error: 5"))
-           (lambda () (err (list  5))))
+(check-exn (regexp (regexp-quote "OAZO Input invalid"))
+           (lambda () (add (list "s" 5) '())))
 
 (check-exn (regexp (regexp-quote "OAZO Input invalid"))
-           (lambda () (add (list "s" 5))))
+           (lambda () (sub (list #f 5) '())))
 
 (check-exn (regexp (regexp-quote "OAZO Input invalid"))
-           (lambda () (sub (list #f 5))))
+           (lambda () (mult (list #t 5) '())))
 
 (check-exn (regexp (regexp-quote "OAZO Input invalid"))
-           (lambda () (mult (list #t 5))))
-
-(check-exn (regexp (regexp-quote "OAZO Input invalid"))
-           (lambda () (div (list "7" 5))))
+           (lambda () (div (list "7" 5) '())))
 (check-exn (regexp (regexp-quote "OAZO Divisor cannot be 0"))
-           (lambda () (div (list 5 0))))
+           (lambda () (div (list 5 0) '())))
 
 (check-exn (regexp (regexp-quote "OAZO Input invalid"))
-           (lambda () (less-than (list 3 4 5))))
+           (lambda () (less-than (list 3 4 5) '())))
 
 (check-exn (regexp (regexp-quote "OAZO wrong # args"))
            (lambda () (serialize (list "s" 5))))
